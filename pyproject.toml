@@ -10,8 +10,10 @@ requires-python = ">=3.13"
 dependencies = [
     "ha-mqtt-discoverable",
     "libsh>=0.2.0",
+    "pydantic>=2.13.4",
     "sdbus>=0.14.2",
     "structlog>=25.5.0",
+    "xdg-base-dirs>=6.0.2",
 ]
 
 [project.scripts]

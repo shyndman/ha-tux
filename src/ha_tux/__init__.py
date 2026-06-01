@@ -1,9 +1,5 @@
-import argparse
 import asyncio
-import os
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Protocol, cast
 
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
@@ -12,41 +8,38 @@ from ha_mqtt_discoverable.media_player import MediaPlayerInfo
 from libsh import get_logger, setup_logging_from_env
 
 from ha_tux.async_mqtt import AsyncioMqttClientDriver, MqttConnectionConfig
+from ha_tux.config import (
+    DEFAULT_MQTT_CLIENT_NAME,
+    DEFAULT_MQTT_DISCOVERY_PREFIX,
+    DEFAULT_MQTT_HOST,
+    DEFAULT_MQTT_PORT,
+    DEFAULT_MQTT_STATE_PREFIX,
+    LOGGER_NAME,
+    BridgeConfig,
+    parse_config,
+)
 from ha_tux.ha_media import build_media_player_settings
 from ha_tux.media_player_bridge import (
     DEFAULT_POSITION_POLL_SECONDS,
     AsyncMprisMediaPlayerBridge,
     create_bridge,
 )
-from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
 
-LOGGER_NAME = "ha_tux"
 STARTUP_EVENT = "application_started"
-DEFAULT_MQTT_HOST = "homeassistant"
-DEFAULT_MQTT_PORT = 1883
-DEFAULT_MQTT_DISCOVERY_PREFIX = "homeassistant"
-DEFAULT_MQTT_STATE_PREFIX = "hmd"
-DEFAULT_MQTT_CLIENT_NAME = "ha-tux"
 
-
-@dataclass(frozen=True, slots=True)
-class BridgeConfig:
-    mqtt_host: str
-    mqtt_port: int
-    mqtt_username: str | None
-    mqtt_password: str | None
-    mqtt_discovery_prefix: str
-    mqtt_state_prefix: str
-    mqtt_client_name: str
-    mpris_service: str
-    position_poll_seconds: float
-    once: bool
-
-
-class ParsedArgs(Protocol):
-    once: bool
-    service: str
-    position_poll_seconds: float
+__all__ = [
+    "DEFAULT_MQTT_CLIENT_NAME",
+    "DEFAULT_MQTT_DISCOVERY_PREFIX",
+    "DEFAULT_MQTT_HOST",
+    "DEFAULT_MQTT_PORT",
+    "DEFAULT_MQTT_STATE_PREFIX",
+    "DEFAULT_POSITION_POLL_SECONDS",
+    "BridgeConfig",
+    "build_mqtt_client",
+    "build_settings",
+    "main",
+    "parse_config",
+]
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -120,65 +113,3 @@ async def run_bridge_once(bridge: AsyncMprisMediaPlayerBridge) -> None:
 async def run_bridge_forever(bridge: AsyncMprisMediaPlayerBridge) -> None:
     await bridge.start()
     _ = await asyncio.Event().wait()
-
-
-def parse_config(argv: Sequence[str] | None = None) -> BridgeConfig:
-    parser = argparse.ArgumentParser(prog="ha-tux")
-    _ = parser.add_argument("--once", action="store_true")
-    _ = parser.add_argument(
-        "--service", default=_env_str("HA_TUX_MPRIS_SERVICE", PLAYERCTLD_SERVICE_NAME)
-    )
-    _ = parser.add_argument(
-        "--position-poll-seconds",
-        type=float,
-        default=_env_float(
-            "HA_TUX_POSITION_POLL_SECONDS", DEFAULT_POSITION_POLL_SECONDS
-        ),
-    )
-    namespace = cast(ParsedArgs, cast(object, parser.parse_args(argv)))
-    position_poll_seconds = namespace.position_poll_seconds
-    if position_poll_seconds <= 0:
-        raise ValueError("--position-poll-seconds must be greater than 0")
-
-    return BridgeConfig(
-        mqtt_host=_env_str("HA_TUX_MQTT_HOST", DEFAULT_MQTT_HOST),
-        mqtt_port=_env_int("HA_TUX_MQTT_PORT", DEFAULT_MQTT_PORT),
-        mqtt_username=_env_optional_str("HA_TUX_MQTT_USERNAME"),
-        mqtt_password=_env_optional_str("HA_TUX_MQTT_PASSWORD"),
-        mqtt_discovery_prefix=_env_str(
-            "HA_TUX_MQTT_DISCOVERY_PREFIX",
-            DEFAULT_MQTT_DISCOVERY_PREFIX,
-        ),
-        mqtt_state_prefix=_env_str(
-            "HA_TUX_MQTT_STATE_PREFIX", DEFAULT_MQTT_STATE_PREFIX
-        ),
-        mqtt_client_name=_env_str("HA_TUX_MQTT_CLIENT_NAME", DEFAULT_MQTT_CLIENT_NAME),
-        mpris_service=namespace.service,
-        position_poll_seconds=position_poll_seconds,
-        once=namespace.once,
-    )
-
-
-def _env_optional_str(name: str) -> str | None:
-    value = os.environ.get(name)
-    if value == "":
-        return None
-    return value
-
-
-def _env_str(name: str, default: str) -> str:
-    return _env_optional_str(name) or default
-
-
-def _env_int(name: str, default: int) -> int:
-    value = _env_optional_str(name)
-    if value is None:
-        return default
-    return int(value)
-
-
-def _env_float(name: str, default: float) -> float:
-    value = _env_optional_str(name)
-    if value is None:
-        return default
-    return float(value)

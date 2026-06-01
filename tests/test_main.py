@@ -12,7 +12,9 @@ from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
 SOURCE_PATH = Path(__file__).resolve().parents[1] / "src"
 
 
-def test_parse_config_uses_defaults() -> None:
+def test_parse_config_uses_defaults(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
     config = parse_config(["--once"])
 
     assert config.once is True
@@ -21,7 +23,10 @@ def test_parse_config_uses_defaults() -> None:
     assert config.mpris_service == PLAYERCTLD_SERVICE_NAME
 
 
-def test_parse_config_uses_environment(monkeypatch: MonkeyPatch) -> None:
+def test_parse_config_uses_environment(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("HA_TUX_MQTT_HOST", "mqtt.local")
     monkeypatch.setenv("HA_TUX_MQTT_PORT", "1884")
     monkeypatch.setenv("HA_TUX_MQTT_USERNAME", "user")
