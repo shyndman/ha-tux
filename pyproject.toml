@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "ha-mqtt-discoverable",
     "libsh>=0.2.0",
     "sdbus>=0.14.2",
     "structlog>=25.5.0",
@@ -41,3 +42,6 @@ extraPaths = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+ha-mqtt-discoverable = { git = "https://github.com/shyndman/ha-mqtt-discoverable" }
