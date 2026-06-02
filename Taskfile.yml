@@ -1,0 +1,31 @@
+version: '3'
+
+vars:
+  PROJECT_DIR: '{{.TASKFILE_DIR}}'
+  USER_SYSTEMD_DIR: '{{.HOME}}/.config/systemd/user'
+  SERVICE_NAME: ha-tux.service
+  SERVICE_SOURCE: systemd/ha-tux.service
+  SERVICE_TARGET: '{{.USER_SYSTEMD_DIR}}/{{.SERVICE_NAME}}'
+
+tasks:
+  install:
+    desc: Install and start the user service
+    cmds:
+      - mkdir -p "{{.USER_SYSTEMD_DIR}}"
+      - PROJECT_DIR="{{.PROJECT_DIR}}" SERVICE_SOURCE="{{.SERVICE_SOURCE}}" SERVICE_TARGET="{{.SERVICE_TARGET}}" uv run python ./scripts/render_service.py
+      - chmod 0644 "{{.SERVICE_TARGET}}"
+      - systemctl --user daemon-reload
+      - systemctl --user enable "{{.SERVICE_NAME}}"
+      - systemctl --user restart "{{.SERVICE_NAME}}"
+
+  uninstall:
+    desc: Stop and remove the user service
+    cmds:
+      - systemctl --user disable --now "{{.SERVICE_NAME}}" || true
+      - rm -f "{{.SERVICE_TARGET}}"
+      - systemctl --user daemon-reload
+
+  logs:
+    desc: Display the service logs
+    cmds:
+      - journalctl --user -o cat --no-pager -u ha-tux.service {{.CLI_ARGS}}

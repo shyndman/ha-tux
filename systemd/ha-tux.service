@@ -1,0 +1,13 @@
+[Unit]
+Description=Bridge local MPRIS media state to Home Assistant
+
+[Service]
+Type=exec
+WorkingDirectory=__PROJECT_DIR__
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:%h/.local/bin:%h/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=__EXEC_START__
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=default.target
