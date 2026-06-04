@@ -1,6 +1,9 @@
 import asyncio
+import logging
+from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Generator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Generic, TypeVar, cast, override
 
 import pytest
@@ -201,6 +204,35 @@ def test_snapshot_publishes_media_state() -> None:
         assert ("position", 7) in media.calls
         assert ("volume", 0.5) in media.calls
         assert ("muted", False) in media.calls
+
+    asyncio.run(run())
+
+
+def test_snapshot_logs_album_art_payload_size(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    async def run() -> None:
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"payload"
+        art = tmp_path / "firefox-art"
+        _ = art.write_bytes(png_bytes)
+        bridge, player, _media, _dbus = build_bridge()
+        player.metadata.value["mpris:artUrl"] = ("s", art.as_uri())
+
+        caplog.set_level(logging.INFO, logger="ha_tux.media_player_bridge")
+
+        await bridge.publish_snapshot("manual")
+
+        expected_url = f"data:image/png;base64,{b64encode(png_bytes).decode('ascii')}"
+        matching_records = [
+            record
+            for record in caplog.records
+            if record.message == "Publishing album art payload"
+        ]
+        assert len(matching_records) == 1
+        log_context = matching_records[0].__dict__
+        assert cast(int, log_context["album_art_payload_bytes"]) == len(expected_url)
+        assert cast(bool, log_context["album_art_remotely_accessible"]) is True
+        assert expected_url not in str(log_context)
 
     asyncio.run(run())
 

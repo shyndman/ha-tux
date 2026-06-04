@@ -287,6 +287,13 @@ class AsyncMprisMediaPlayerBridge:
         if previous is None or previous.muted != snapshot.muted:
             await self.media_player.set_muted(snapshot.muted)
         if previous is None or previous.album_art.url != snapshot.album_art.url:
+            LOGGER.info(
+                "Publishing album art payload",
+                extra={
+                    "album_art_payload_bytes": len(snapshot.album_art.url),
+                    "album_art_remotely_accessible": snapshot.album_art.remotely_accessible,
+                },
+            )
             await self.media_player.set_albumart_url(snapshot.album_art.url)
         if (
             previous is None
