@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "aiomqtt>=2.5.1",
     "ha-mqtt-discoverable",
     "libsh>=0.2.0",
     "pydantic>=2.13.4",

@@ -4,14 +4,17 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from ha_mqtt_discoverable import Settings
-from ha_mqtt_discoverable.media_player import MediaPlayerCallbacks, MediaPlayerInfo
-from paho.mqtt.client import Client, MQTTMessage
+from aiomqtt import Message
+from ha_mqtt_discoverable import MqttSession
+from ha_mqtt_discoverable.media_player import (
+    MediaPlayer,
+    MediaPlayerCallbacks,
+    MediaPlayerInfo,
+)
 
 from ha_tux.album_art import AlbumArtPayload, AlbumArtResolver
 from ha_tux.ha_media import (
     MediaPlayerPublisher,
-    NonConnectingMediaPlayer,
     PlaceholderPublisher,
 )
 from ha_tux.mpris import (
@@ -68,7 +71,6 @@ class AsyncMprisMediaPlayerBridge:
         dbus: DbusDaemonAsync,
         media_player: MediaPlayerPublisher,
         album_art_resolver: AlbumArtResolver,
-        loop: asyncio.AbstractEventLoop,
         service_name: str = PLAYERCTLD_SERVICE_NAME,
         position_poll_seconds: float = DEFAULT_POSITION_POLL_SECONDS,
     ) -> None:
@@ -79,7 +81,6 @@ class AsyncMprisMediaPlayerBridge:
         self.album_art_resolver: AlbumArtResolver = album_art_resolver
         self.service_name: str = service_name
         self.position_poll_seconds: float = position_poll_seconds
-        self._loop: asyncio.AbstractEventLoop = loop
         self._last_snapshot: MediaSnapshot | None = None
         self._last_nonzero_volume: float | None = None
         self._tasks: set[asyncio.Task[None]] = set()
@@ -105,18 +106,17 @@ class AsyncMprisMediaPlayerBridge:
                 pass
         self._tasks.clear()
         self._command_tasks.clear()
-        self.media_player.close()
 
     async def publish_snapshot(self, reason: PublishReason) -> None:
         try:
             snapshot = await self._read_snapshot()
         except Exception:
             LOGGER.exception("Unable to read MPRIS snapshot", extra={"reason": reason})
-            self.media_player.set_availability(False)
+            await self.media_player.set_available(False)
             return
 
-        self.media_player.set_availability(True)
-        self._publish_snapshot(snapshot)
+        await self.media_player.set_available(True)
+        await self._publish_snapshot(snapshot)
 
     async def handle_play(self) -> None:
         if not await _await_property(self.player.can_play):
@@ -161,22 +161,22 @@ class AsyncMprisMediaPlayerBridge:
             return
         await _set_property(self.player.volume, volume)
         self._update_last_nonzero_volume(volume)
-        self.media_player.set_volume(volume)
-        self.media_player.set_muted(volume == 0.0)
+        await self.media_player.set_volume(volume)
+        await self.media_player.set_muted(volume == 0.0)
 
     async def handle_volume_mute(self, muted: bool) -> None:
         current_volume = cast(float, await _await_property(self.player.volume))
         if muted:
             self._update_last_nonzero_volume(current_volume)
             await _set_property(self.player.volume, 0.0)
-            self.media_player.set_volume(0.0)
-            self.media_player.set_muted(True)
+            await self.media_player.set_volume(0.0)
+            await self.media_player.set_muted(True)
             return
 
         restore_volume = self._last_nonzero_volume or DEFAULT_UNMUTE_VOLUME
         await _set_property(self.player.volume, restore_volume)
-        self.media_player.set_volume(restore_volume)
-        self.media_player.set_muted(False)
+        await self.media_player.set_volume(restore_volume)
+        await self.media_player.set_muted(False)
 
     async def handle_seek(self, position_seconds: float) -> None:
         if position_seconds < 0:
@@ -196,7 +196,7 @@ class AsyncMprisMediaPlayerBridge:
 
         position_us = seconds_to_microseconds(position_seconds)
         await self.player.set_position(track_id, position_us)
-        self.media_player.set_position(microseconds_to_seconds(position_us))
+        await self.media_player.set_position(microseconds_to_seconds(position_us))
 
     def callbacks(self) -> MediaPlayerCallbacks:
         return {
@@ -210,70 +210,33 @@ class AsyncMprisMediaPlayerBridge:
             "seek": self._seek_callback,
         }
 
-    def _play_callback(
-        self,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
-    ) -> None:
+    async def _play_callback(self, _player: MediaPlayer, _message: Message) -> None:
         self._schedule_command(self.handle_play())
 
-    def _pause_callback(
-        self,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
-    ) -> None:
+    async def _pause_callback(self, _player: MediaPlayer, _message: Message) -> None:
         self._schedule_command(self.handle_pause())
 
-    def _stop_callback(
-        self,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
-    ) -> None:
+    async def _stop_callback(self, _player: MediaPlayer, _message: Message) -> None:
         self._schedule_command(self.handle_stop())
 
-    def _next_callback(
-        self,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
-    ) -> None:
+    async def _next_callback(self, _player: MediaPlayer, _message: Message) -> None:
         self._schedule_command(self.handle_next_track())
 
-    def _previous_callback(
-        self,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
-    ) -> None:
+    async def _previous_callback(self, _player: MediaPlayer, _message: Message) -> None:
         self._schedule_command(self.handle_previous_track())
 
-    def _volume_set_callback(
-        self,
-        volume: float,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
+    async def _volume_set_callback(
+        self, _player: MediaPlayer, volume: float, _message: Message
     ) -> None:
         self._schedule_command(self.handle_volume_set(volume))
 
-    def _volume_mute_callback(
-        self,
-        muted: bool,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
+    async def _volume_mute_callback(
+        self, _player: MediaPlayer, muted: bool, _message: Message
     ) -> None:
         self._schedule_command(self.handle_volume_mute(muted))
 
-    def _seek_callback(
-        self,
-        position_seconds: float,
-        _client: Client,
-        _user_data: object,
-        _message: MQTTMessage,
+    async def _seek_callback(
+        self, _player: MediaPlayer, position_seconds: float, _message: Message
     ) -> None:
         self._schedule_command(self.handle_seek(position_seconds))
 
@@ -297,32 +260,32 @@ class AsyncMprisMediaPlayerBridge:
             album_art=album_art,
         )
 
-    def _publish_snapshot(self, snapshot: MediaSnapshot) -> None:
+    async def _publish_snapshot(self, snapshot: MediaSnapshot) -> None:
         previous = self._last_snapshot
         if previous is None or previous.state != snapshot.state:
-            self.media_player.set_state(snapshot.state)
+            await self.media_player.set_state(snapshot.state)
         if previous is None or previous.title != snapshot.title:
-            self.media_player.set_title(snapshot.title)
+            await self.media_player.set_title(snapshot.title)
         if previous is None or previous.artist != snapshot.artist:
-            self.media_player.set_artist(snapshot.artist)
+            await self.media_player.set_artist(snapshot.artist)
         if previous is None or previous.album != snapshot.album:
-            self.media_player.set_album(snapshot.album)
+            await self.media_player.set_album(snapshot.album)
         if previous is None or previous.duration != snapshot.duration:
-            self.media_player.set_duration(snapshot.duration)
+            await self.media_player.set_duration(snapshot.duration)
         if previous is None or previous.position != snapshot.position:
-            self.media_player.set_position(snapshot.position)
+            await self.media_player.set_position(snapshot.position)
         if previous is None or previous.volume != snapshot.volume:
-            self.media_player.set_volume(snapshot.volume)
+            await self.media_player.set_volume(snapshot.volume)
         if previous is None or previous.muted != snapshot.muted:
-            self.media_player.set_muted(snapshot.muted)
+            await self.media_player.set_muted(snapshot.muted)
         if previous is None or previous.album_art.url != snapshot.album_art.url:
-            self.media_player.set_albumart_url(snapshot.album_art.url)
+            await self.media_player.set_albumart_url(snapshot.album_art.url)
         if (
             previous is None
             or previous.album_art.remotely_accessible
             != snapshot.album_art.remotely_accessible
         ):
-            self.media_player.set_media_image_remotely_accessible(
+            await self.media_player.set_media_image_remotely_accessible(
                 snapshot.album_art.remotely_accessible
             )
         self._last_snapshot = snapshot
@@ -333,7 +296,7 @@ class AsyncMprisMediaPlayerBridge:
 
     async def _watch_seeked(self) -> None:
         async for position_us in self.player.seeked.catch():
-            self.media_player.set_position(microseconds_to_seconds(position_us))
+            await self.media_player.set_position(microseconds_to_seconds(position_us))
 
     async def _watch_name_owner(self) -> None:
         async for name, _old_owner, new_owner in self.dbus.name_owner_changed.catch():
@@ -357,7 +320,7 @@ class AsyncMprisMediaPlayerBridge:
                 self._last_snapshot is not None
                 and position != self._last_snapshot.position
             ):
-                self.media_player.set_position(position)
+                await self.media_player.set_position(position)
                 self._last_snapshot = _replace_snapshot_position(
                     self._last_snapshot, position
                 )
@@ -371,7 +334,7 @@ class AsyncMprisMediaPlayerBridge:
 
     async def _handle_name_owner_changed(self, new_owner: str) -> None:
         if new_owner == "":
-            self.media_player.set_availability(False)
+            await self.media_player.set_available(False)
             self._last_snapshot = None
             return
         self.player = new_mpris_player_proxy(self.service_name)
@@ -379,12 +342,9 @@ class AsyncMprisMediaPlayerBridge:
         await self.publish_snapshot("name_owner_changed")
 
     def _schedule_command(self, awaitable: Coroutine[object, object, None]) -> None:
-        def create_task() -> None:
-            task: asyncio.Task[None] = self._loop.create_task(awaitable)
-            self._command_tasks.add(task)
-            task.add_done_callback(self._command_task_done)
-
-        _ = self._loop.call_soon_threadsafe(create_task)
+        task: asyncio.Task[None] = asyncio.create_task(awaitable)
+        self._command_tasks.add(task)
+        task.add_done_callback(self._command_task_done)
 
     def _command_task_done(self, task: asyncio.Task[None]) -> None:
         self._command_tasks.discard(task)
@@ -398,7 +358,7 @@ class AsyncMprisMediaPlayerBridge:
     def _track_task(
         self, awaitable: Coroutine[object, object, None]
     ) -> asyncio.Task[None]:
-        task: asyncio.Task[None] = self._loop.create_task(awaitable)
+        task: asyncio.Task[None] = asyncio.create_task(awaitable)
         task.add_done_callback(self._observer_task_done)
         return task
 
@@ -417,9 +377,9 @@ class AsyncMprisMediaPlayerBridge:
 
 
 def create_bridge(
-    settings: Settings[MediaPlayerInfo],
+    session: MqttSession,
+    entity: MediaPlayerInfo,
     *,
-    loop: asyncio.AbstractEventLoop,
     service_name: str = PLAYERCTLD_SERVICE_NAME,
     position_poll_seconds: float = DEFAULT_POSITION_POLL_SECONDS,
 ) -> AsyncMprisMediaPlayerBridge:
@@ -434,11 +394,10 @@ def create_bridge(
         dbus=dbus,
         media_player=placeholder,
         album_art_resolver=resolver,
-        loop=loop,
         service_name=service_name,
         position_poll_seconds=position_poll_seconds,
     )
-    media_player = NonConnectingMediaPlayer(settings, bridge.callbacks())
+    media_player = MediaPlayer(session, entity, bridge.callbacks())
     bridge.media_player = media_player
     return bridge
 

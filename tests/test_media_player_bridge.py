@@ -3,7 +3,8 @@ from collections.abc import AsyncIterator, Awaitable, Generator
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar, cast, override
 
-from paho.mqtt.client import Client, MQTTMessage
+from aiomqtt import Message
+from ha_mqtt_discoverable.media_player import MediaPlayer
 
 from ha_tux.album_art import AlbumArtResolver
 from ha_tux.media_player_bridge import AsyncMprisMediaPlayerBridge
@@ -129,49 +130,44 @@ class FakeDbus:
 @dataclass
 class FakeMediaPlayer:
     calls: list[tuple[str, object]] = field(default_factory=list)
-    closed: bool = False
 
-    def set_availability(self, availability: bool) -> None:
-        self.calls.append(("availability", availability))
+    async def set_available(self, available: bool) -> None:
+        self.calls.append(("available", available))
 
-    def set_state(self, state: str) -> None:
+    async def set_state(self, state: str) -> None:
         self.calls.append(("state", state))
 
-    def set_title(self, title: str) -> None:
+    async def set_title(self, title: str) -> None:
         self.calls.append(("title", title))
 
-    def set_artist(self, artist: str) -> None:
+    async def set_artist(self, artist: str) -> None:
         self.calls.append(("artist", artist))
 
-    def set_album(self, album: str) -> None:
+    async def set_album(self, album: str) -> None:
         self.calls.append(("album", album))
 
-    def set_duration(self, duration: int) -> None:
+    async def set_duration(self, duration: int) -> None:
         self.calls.append(("duration", duration))
 
-    def set_position(self, position: int) -> None:
+    async def set_position(self, position: int) -> None:
         self.calls.append(("position", position))
 
-    def set_volume(self, volume: float) -> None:
+    async def set_volume(self, volume: float) -> None:
         self.calls.append(("volume", volume))
 
-    def set_muted(self, muted: bool) -> None:
+    async def set_muted(self, muted: bool) -> None:
         self.calls.append(("muted", muted))
 
-    def set_albumart_url(self, url: str) -> None:
+    async def set_albumart_url(self, url: str) -> None:
         self.calls.append(("albumart", url))
 
-    def set_media_image_remotely_accessible(self, accessible: bool) -> None:
+    async def set_media_image_remotely_accessible(self, accessible: bool) -> None:
         self.calls.append(("remote_art", accessible))
-
-    def close(self) -> None:
-        self.closed = True
 
 
 def build_bridge() -> tuple[
     AsyncMprisMediaPlayerBridge, FakePlayer, FakeMediaPlayer, FakeDbus
 ]:
-    loop = asyncio.get_running_loop()
     player = FakePlayer()
     media = FakeMediaPlayer()
     dbus = FakeDbus()
@@ -181,7 +177,6 @@ def build_bridge() -> tuple[
         dbus=cast(DbusDaemonAsync, cast(object, dbus)),
         media_player=media,
         album_art_resolver=AlbumArtResolver(),
-        loop=loop,
         position_poll_seconds=0.01,
     )
     return bridge, player, media, dbus
@@ -193,7 +188,7 @@ def test_snapshot_publishes_media_state() -> None:
 
         await bridge.publish_snapshot("manual")
 
-        assert ("availability", True) in media.calls
+        assert ("available", True) in media.calls
         assert ("state", "playing") in media.calls
         assert ("title", "Song") in media.calls
         assert ("artist", "Artist") in media.calls
@@ -251,10 +246,9 @@ def test_command_callbacks_enqueue_async_work() -> None:
         play = callbacks.get("play")
         assert play is not None
 
-        play(
-            cast(Client, cast(object, None)),
-            object(),
-            cast(MQTTMessage, cast(object, None)),
+        await play(
+            cast(MediaPlayer, cast(object, None)),
+            cast(Message, cast(object, None)),
         )
         await asyncio.sleep(0)
         await asyncio.sleep(0)
