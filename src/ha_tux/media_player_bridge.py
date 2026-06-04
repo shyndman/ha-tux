@@ -85,6 +85,8 @@ class AsyncMprisMediaPlayerBridge:
         self._last_nonzero_volume: float | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self._command_tasks: set[asyncio.Task[None]] = set()
+        self._failure_event: asyncio.Event = asyncio.Event()
+        self._failure: Exception | None = None
         self._stopped: bool = False
 
     async def start(self) -> None:
@@ -97,6 +99,7 @@ class AsyncMprisMediaPlayerBridge:
 
     async def stop(self) -> None:
         self._stopped = True
+        _ = self._failure_event.set()
         for task in tuple(self._tasks | self._command_tasks):
             _ = task.cancel()
         for task in tuple(self._tasks | self._command_tasks):
@@ -106,6 +109,11 @@ class AsyncMprisMediaPlayerBridge:
                 pass
         self._tasks.clear()
         self._command_tasks.clear()
+
+    async def wait_until_stopped_or_failed(self) -> None:
+        _ = await self._failure_event.wait()
+        if self._failure is not None:
+            raise self._failure
 
     async def publish_snapshot(self, reason: PublishReason) -> None:
         try:
@@ -352,7 +360,8 @@ class AsyncMprisMediaPlayerBridge:
             task.result()
         except asyncio.CancelledError:
             pass
-        except Exception:
+        except Exception as error:
+            self._mark_failed(error)
             LOGGER.exception("MQTT command task failed")
 
     def _track_task(
@@ -368,8 +377,14 @@ class AsyncMprisMediaPlayerBridge:
             task.result()
         except asyncio.CancelledError:
             pass
-        except Exception:
+        except Exception as error:
+            self._mark_failed(error)
             LOGGER.exception("MPRIS observer task failed")
+
+    def _mark_failed(self, error: Exception) -> None:
+        if self._failure is None:
+            self._failure = error
+        _ = self._failure_event.set()
 
     def _update_last_nonzero_volume(self, volume: float) -> None:
         if volume > 0.0:

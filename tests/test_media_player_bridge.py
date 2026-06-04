@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Awaitable, Generator
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar, cast, override
 
+import pytest
 from aiomqtt import Message
 from ha_mqtt_discoverable.media_player import MediaPlayer
 
@@ -130,6 +131,7 @@ class FakeDbus:
 @dataclass
 class FakeMediaPlayer:
     calls: list[tuple[str, object]] = field(default_factory=list)
+    fail_position: bool = False
 
     async def set_available(self, available: bool) -> None:
         self.calls.append(("available", available))
@@ -150,6 +152,8 @@ class FakeMediaPlayer:
         self.calls.append(("duration", duration))
 
     async def set_position(self, position: int) -> None:
+        if self.fail_position:
+            raise RuntimeError("publish failed")
         self.calls.append(("position", position))
 
     async def set_volume(self, volume: float) -> None:
@@ -254,5 +258,20 @@ def test_command_callbacks_enqueue_async_work() -> None:
         await asyncio.sleep(0)
 
         assert player.play_calls == 1
+
+    asyncio.run(run())
+
+
+def test_observer_publish_failure_stops_bridge() -> None:
+    async def run() -> None:
+        bridge, player, media, _dbus = build_bridge()
+
+        await bridge.start()
+        media.fail_position = True
+        await player.seeked.emit(8 * MICROSECONDS_PER_SECOND)
+
+        with pytest.raises(RuntimeError, match="publish failed"):
+            await asyncio.wait_for(bridge.wait_until_stopped_or_failed(), timeout=1)
+        await bridge.stop()
 
     asyncio.run(run())

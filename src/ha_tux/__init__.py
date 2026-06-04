@@ -20,6 +20,7 @@ from ha_tux.media_player_bridge import (
 )
 
 STARTUP_EVENT = "application_started"
+MQTT_RECONNECT_DELAY_SECONDS = 2.0
 
 __all__ = [
     "DEFAULT_MQTT_DISCOVERY_PREFIX",
@@ -47,20 +48,39 @@ def main(argv: Sequence[str] | None = None) -> None:
 async def async_main(config: BridgeConfig) -> None:
     mqtt_settings = build_mqtt_settings(config)
     entity = build_media_player_entity()
-    async with MqttSession(mqtt_settings) as session:
-        bridge = create_bridge(
-            session,
-            entity,
-            service_name=config.mpris_service,
-            position_poll_seconds=config.position_poll_seconds,
-        )
-        try:
-            if config.once:
+    if config.once:
+        async with MqttSession(mqtt_settings) as session:
+            bridge = create_bridge(
+                session,
+                entity,
+                service_name=config.mpris_service,
+                position_poll_seconds=config.position_poll_seconds,
+            )
+            try:
                 await run_bridge_once(bridge)
-                return
-            await run_bridge_forever(bridge)
-        finally:
-            await bridge.stop()
+            finally:
+                await bridge.stop()
+        return
+
+    logger = get_logger(LOGGER_NAME)
+    while True:
+        try:
+            async with MqttSession(mqtt_settings) as session:
+                bridge = create_bridge(
+                    session,
+                    entity,
+                    service_name=config.mpris_service,
+                    position_poll_seconds=config.position_poll_seconds,
+                )
+                try:
+                    await run_bridge_forever(bridge)
+                finally:
+                    await bridge.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("bridge_session_failed_reconnecting")
+            await asyncio.sleep(MQTT_RECONNECT_DELAY_SECONDS)
 
 
 def build_mqtt_settings(config: BridgeConfig) -> Settings.MQTT:
@@ -78,4 +98,4 @@ async def run_bridge_once(bridge: AsyncMprisMediaPlayerBridge) -> None:
 
 async def run_bridge_forever(bridge: AsyncMprisMediaPlayerBridge) -> None:
     await bridge.start()
-    _ = await asyncio.Event().wait()
+    await bridge.wait_until_stopped_or_failed()
