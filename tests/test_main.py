@@ -6,6 +6,7 @@ import sys
 
 from pytest import MonkeyPatch
 
+import ha_tux.config as config_module
 from ha_tux import DEFAULT_MQTT_URL, build_mqtt_settings, parse_config
 from ha_tux.config import BridgeConfig
 from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
@@ -15,11 +16,13 @@ SOURCE_PATH = Path(__file__).resolve().parents[1] / "src"
 
 def test_parse_config_uses_defaults(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(config_module, "default_mqtt_client_name", lambda: "test-host")
 
     config = parse_config(["--once"])
 
     assert config.once is True
     assert config.mqtt_url == DEFAULT_MQTT_URL
+    assert config.mqtt_client_name == "test-host"
     assert config.mpris_service == PLAYERCTLD_SERVICE_NAME
 
 

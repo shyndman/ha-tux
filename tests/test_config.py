@@ -22,6 +22,15 @@ from ha_tux.config import (
 from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
 
 
+@pytest.fixture(autouse=True)
+def default_client_name(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        config_module,
+        "default_mqtt_client_name",
+        lambda: "test-host",
+    )
+
+
 def test_missing_config_file_returns_defaults_and_writes_template(
     tmp_path: Path,
 ) -> None:
@@ -30,6 +39,7 @@ def test_missing_config_file_returns_defaults_and_writes_template(
     app_config = load_app_config(path=path, env={})
 
     assert app_config.mqtt.url == DEFAULT_MQTT_URL
+    assert app_config.mqtt.client_name == "test-host"
     assert app_config.mpris.service == PLAYERCTLD_SERVICE_NAME
     assert path.read_text(encoding="utf-8") == DEFAULT_CONFIG_FILE_TEXT
     assert all(
@@ -181,6 +191,7 @@ position_poll_seconds = 1.5
     assert bridge_config.once is True
     assert bridge_config.mpris_service == "org.example.Cli"
     assert bridge_config.position_poll_seconds == 4.5
+    assert bridge_config.mqtt_client_name == "test-host"
 
 
 def test_empty_environment_variables_are_ignored(tmp_path: Path) -> None:
@@ -316,6 +327,7 @@ url = "mqtt://log-user:secret-password@mqtt.local:1883"
     assert isinstance(configuration, str)
     assert "[mqtt]" in configuration
     assert 'url = "mqtt://<redacted>:<redacted>@mqtt.local:1883"' in configuration
+    assert 'client_name = "test-host"' in configuration
     assert "log-user" not in configuration
     assert "secret-password" not in configuration
 
@@ -324,6 +336,7 @@ def test_app_config_is_constructible_for_type_checking() -> None:
     app_config = AppConfig()
 
     assert app_config.mqtt.url == DEFAULT_MQTT_URL
+    assert app_config.mqtt.client_name == "test-host"
 
 
 def test_validation_error_from_environment_names_env_vars(tmp_path: Path) -> None:

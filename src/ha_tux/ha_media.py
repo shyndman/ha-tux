@@ -3,7 +3,8 @@ from typing import Protocol
 from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable.media_player import MediaPlayerInfo
 
-HA_TUX_DEVICE_IDENTIFIER = "ha-tux"
+from ha_tux.host_device import build_host_device_info
+
 HA_TUX_MEDIA_OBJECT_ID = "desktop_media"
 HA_TUX_MEDIA_UNIQUE_ID = "ha_tux_desktop_media"
 HA_TUX_MEDIA_NAME = "Desktop Media"
@@ -89,12 +90,12 @@ class PlaceholderPublisher:
         raise RuntimeError(PUBLISHER_NOT_INITIALIZED)
 
 
-def build_media_player_entity() -> MediaPlayerInfo:
-    device = DeviceInfo(name="ha-tux", identifiers=HA_TUX_DEVICE_IDENTIFIER)
+def build_media_player_entity(device: DeviceInfo | None = None) -> MediaPlayerInfo:
+    resolved_device = device if device is not None else build_host_device_info()
     return MediaPlayerInfo(
         name=HA_TUX_MEDIA_NAME,
         object_id=HA_TUX_MEDIA_OBJECT_ID,
         unique_id=HA_TUX_MEDIA_UNIQUE_ID,
-        device=device,
+        device=resolved_device,
         device_class=HA_TUX_MEDIA_DEVICE_CLASS,
     )

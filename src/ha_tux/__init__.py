@@ -5,7 +5,6 @@ from ha_mqtt_discoverable import MqttSession, Settings
 from libsh import get_logger, setup_logging_from_env
 
 from ha_tux.config import (
-    DEFAULT_MQTT_CLIENT_NAME,
     DEFAULT_MQTT_DISCOVERY_PREFIX,
     DEFAULT_MQTT_STATE_PREFIX,
     DEFAULT_MQTT_URL,
@@ -23,7 +22,6 @@ from ha_tux.media_player_bridge import (
 STARTUP_EVENT = "application_started"
 
 __all__ = [
-    "DEFAULT_MQTT_CLIENT_NAME",
     "DEFAULT_MQTT_DISCOVERY_PREFIX",
     "DEFAULT_MQTT_STATE_PREFIX",
     "DEFAULT_MQTT_URL",

@@ -13,6 +13,7 @@ from libsh import get_logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from xdg_base_dirs import xdg_config_home
 
+from ha_tux.host_device import default_mqtt_client_name
 from ha_tux.media_player_bridge import DEFAULT_POSITION_POLL_SECONDS
 from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
 
@@ -20,7 +21,6 @@ LOGGER_NAME: Final = "ha_tux"
 DEFAULT_MQTT_URL: Final = "mqtt://homeassistant:1883"
 DEFAULT_MQTT_DISCOVERY_PREFIX: Final = "homeassistant"
 DEFAULT_MQTT_STATE_PREFIX: Final = "hmd"
-DEFAULT_MQTT_CLIENT_NAME: Final = "ha-tux"
 CONFIG_DIRECTORY_NAME: Final = "ha-tux"
 CONFIG_FILE_NAME: Final = "config.toml"
 REDACTED_SECRET: Final = "<redacted>"
@@ -37,7 +37,8 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 #url = "mqtt://ha_tux:secret@homeassistant:1883"
 #discovery_prefix = "homeassistant"
 #state_prefix = "hmd"
-#client_name = "ha-tux"
+# client_name defaults to this computer's hostname.
+#client_name = "desktop"
 
 #[mpris]
 #service = "org.mpris.MediaPlayer2.playerctld"
@@ -70,7 +71,7 @@ class MqttConfig(BaseModel):
     url: str = DEFAULT_MQTT_URL
     discovery_prefix: str = DEFAULT_MQTT_DISCOVERY_PREFIX
     state_prefix: str = DEFAULT_MQTT_STATE_PREFIX
-    client_name: str = DEFAULT_MQTT_CLIENT_NAME
+    client_name: str = Field(default_factory=lambda: default_mqtt_client_name())
 
     @field_validator("url")
     @classmethod
