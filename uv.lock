@@ -56,7 +56,7 @@ wheels = [
 [[package]]
 name = "ha-mqtt-discoverable"
 version = "1.0.0"
-source = { git = "https://github.com/shyndman/ha-mqtt-discoverable#e1e7694271ccc7c100e89984d50e03c9d968d02f" }
+source = { git = "https://github.com/shyndman/ha-mqtt-discoverable#7aaba981fb91f1f03c3f83371c0ffeff1d783654" }
 dependencies = [
     { name = "aiomqtt" },
     { name = "gitlike-commands" },

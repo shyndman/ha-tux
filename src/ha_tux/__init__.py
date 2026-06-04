@@ -7,9 +7,8 @@ from libsh import get_logger, setup_logging_from_env
 from ha_tux.config import (
     DEFAULT_MQTT_CLIENT_NAME,
     DEFAULT_MQTT_DISCOVERY_PREFIX,
-    DEFAULT_MQTT_HOST,
-    DEFAULT_MQTT_PORT,
     DEFAULT_MQTT_STATE_PREFIX,
+    DEFAULT_MQTT_URL,
     LOGGER_NAME,
     BridgeConfig,
     parse_config,
@@ -26,9 +25,8 @@ STARTUP_EVENT = "application_started"
 __all__ = [
     "DEFAULT_MQTT_CLIENT_NAME",
     "DEFAULT_MQTT_DISCOVERY_PREFIX",
-    "DEFAULT_MQTT_HOST",
-    "DEFAULT_MQTT_PORT",
     "DEFAULT_MQTT_STATE_PREFIX",
+    "DEFAULT_MQTT_URL",
     "DEFAULT_POSITION_POLL_SECONDS",
     "BridgeConfig",
     "build_mqtt_settings",
@@ -69,10 +67,7 @@ async def async_main(config: BridgeConfig) -> None:
 
 def build_mqtt_settings(config: BridgeConfig) -> Settings.MQTT:
     return Settings.MQTT(
-        host=config.mqtt_host,
-        port=config.mqtt_port,
-        username=config.mqtt_username,
-        password=config.mqtt_password,
+        url=config.mqtt_url,
         client_name=config.mqtt_client_name,
         discovery_prefix=config.mqtt_discovery_prefix,
         state_prefix=config.mqtt_state_prefix,

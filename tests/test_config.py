@@ -8,7 +8,7 @@ from pytest import MonkeyPatch
 import ha_tux.config as config_module
 from ha_tux.config import (
     DEFAULT_CONFIG_FILE_TEXT,
-    DEFAULT_MQTT_PORT,
+    DEFAULT_MQTT_URL,
     AppConfig,
     BridgeConfig,
     ConfigError,
@@ -29,8 +29,7 @@ def test_missing_config_file_returns_defaults_and_writes_template(
 
     app_config = load_app_config(path=path, env={})
 
-    assert app_config.mqtt.host == "homeassistant"
-    assert app_config.mqtt.port == DEFAULT_MQTT_PORT
+    assert app_config.mqtt.url == DEFAULT_MQTT_URL
     assert app_config.mpris.service == PLAYERCTLD_SERVICE_NAME
     assert path.read_text(encoding="utf-8") == DEFAULT_CONFIG_FILE_TEXT
     assert all(
@@ -43,12 +42,14 @@ def test_missing_config_file_returns_defaults_and_writes_template(
 def test_default_config_writer_never_overwrites_existing_file(tmp_path: Path) -> None:
     path = tmp_path / "ha-tux" / "config.toml"
     path.parent.mkdir()
-    _ = path.write_text('[mqtt]\nhost = "mqtt.local"\n', encoding="utf-8")
+    _ = path.write_text('[mqtt]\nurl = "mqtt://mqtt.local:1883"\n', encoding="utf-8")
 
     did_write = write_default_config_file(path)
 
     assert did_write is False
-    assert path.read_text(encoding="utf-8") == '[mqtt]\nhost = "mqtt.local"\n'
+    assert path.read_text(encoding="utf-8") == (
+        '[mqtt]\nurl = "mqtt://mqtt.local:1883"\n'
+    )
 
 
 def test_config_file_path_uses_provided_config_home() -> None:
@@ -82,10 +83,7 @@ def test_toml_file_values_populate_app_config(tmp_path: Path) -> None:
     _ = path.write_text(
         """
 [mqtt]
-host = "mqtt.local"
-port = 1884
-username = "user"
-password = "secret"
+url = "mqtts://user:secret@mqtt.local:8883"
 discovery_prefix = "discovery"
 state_prefix = "state"
 client_name = "client"
@@ -101,10 +99,7 @@ position_poll_seconds = 2.5
 
     app_config = load_app_config(path=path, env={})
 
-    assert app_config.mqtt.host == "mqtt.local"
-    assert app_config.mqtt.port == 1884
-    assert app_config.mqtt.username == "user"
-    assert app_config.mqtt.password == "secret"
+    assert app_config.mqtt.url == "mqtts://user:secret@mqtt.local:8883"
     assert app_config.mqtt.discovery_prefix == "discovery"
     assert app_config.mqtt.state_prefix == "state"
     assert app_config.mqtt.client_name == "client"
@@ -117,10 +112,7 @@ def test_environment_overrides_toml_file_values(tmp_path: Path) -> None:
     _ = path.write_text(
         """
 [mqtt]
-host = "file-host"
-port = 1883
-username = "file-user"
-password = "file-secret"
+url = "mqtt://file-user:file-secret@file-host:1883"
 discovery_prefix = "file-discovery"
 state_prefix = "file-state"
 client_name = "file-client"
@@ -137,10 +129,7 @@ position_poll_seconds = 1.5
     app_config = load_app_config(
         path=path,
         env={
-            "HA_TUX_MQTT_HOST": "env-host",
-            "HA_TUX_MQTT_PORT": "1885",
-            "HA_TUX_MQTT_USERNAME": "env-user",
-            "HA_TUX_MQTT_PASSWORD": "env-secret",
+            "HA_TUX_MQTT_URL": "wss://env-user:env-secret@env-host:443/mqtt",
             "HA_TUX_MQTT_DISCOVERY_PREFIX": "env-discovery",
             "HA_TUX_MQTT_STATE_PREFIX": "env-state",
             "HA_TUX_MQTT_CLIENT_NAME": "env-client",
@@ -149,10 +138,7 @@ position_poll_seconds = 1.5
         },
     )
 
-    assert app_config.mqtt.host == "env-host"
-    assert app_config.mqtt.port == 1885
-    assert app_config.mqtt.username == "env-user"
-    assert app_config.mqtt.password == "env-secret"
+    assert app_config.mqtt.url == "wss://env-user:env-secret@env-host:443/mqtt"
     assert app_config.mqtt.discovery_prefix == "env-discovery"
     assert app_config.mqtt.state_prefix == "env-state"
     assert app_config.mqtt.client_name == "env-client"
@@ -199,18 +185,16 @@ position_poll_seconds = 1.5
 
 def test_empty_environment_variables_are_ignored(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    _ = path.write_text('[mqtt]\nhost = "file-host"\n', encoding="utf-8")
+    _ = path.write_text('[mqtt]\nurl = "mqtt://file-host:1883"\n', encoding="utf-8")
 
     app_config = load_app_config(
         path=path,
         env={
-            "HA_TUX_MQTT_HOST": "",
-            "HA_TUX_MQTT_PORT": "",
+            "HA_TUX_MQTT_URL": "",
         },
     )
 
-    assert app_config.mqtt.host == "file-host"
-    assert app_config.mqtt.port == DEFAULT_MQTT_PORT
+    assert app_config.mqtt.url == "mqtt://file-host:1883"
 
 
 def test_invalid_toml_raises_config_error_with_path(tmp_path: Path) -> None:
@@ -229,9 +213,9 @@ def test_extra_toml_keys_are_rejected(tmp_path: Path) -> None:
         _ = load_app_config(path=path, env={})
 
 
-def test_invalid_port_is_rejected(tmp_path: Path) -> None:
+def test_invalid_url_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    _ = path.write_text("[mqtt]\nport = 70000\n", encoding="utf-8")
+    _ = path.write_text('[mqtt]\nurl = "http://mqtt.local:1883"\n', encoding="utf-8")
 
     with pytest.raises(ConfigError, match=f"Invalid config file {path}"):
         _ = load_app_config(path=path, env={})
@@ -247,10 +231,7 @@ def test_non_positive_position_poll_seconds_is_rejected(tmp_path: Path) -> None:
 
 def test_pretty_config_logging_renders_all_non_secret_fields() -> None:
     bridge_config = BridgeConfig(
-        mqtt_host="mqtt.local",
-        mqtt_port=1884,
-        mqtt_username="user",
-        mqtt_password=None,
+        mqtt_url="ws://mqtt.local:8080/mqtt",
         mqtt_discovery_prefix="discovery",
         mqtt_state_prefix="state",
         mqtt_client_name="client",
@@ -264,10 +245,7 @@ def test_pretty_config_logging_renders_all_non_secret_fields() -> None:
     assert (
         rendered
         == """[mqtt]
-host = "mqtt.local"
-port = 1884
-username = "user"
-password = null
+url = "ws://mqtt.local:8080/mqtt"
 discovery_prefix = "discovery"
 state_prefix = "state"
 client_name = "client"
@@ -282,10 +260,7 @@ position_poll_seconds = 2.5"""
 
 def test_pretty_config_logging_redacts_password() -> None:
     bridge_config = BridgeConfig(
-        mqtt_host="mqtt.local",
-        mqtt_port=1884,
-        mqtt_username="user",
-        mqtt_password="secret-password",
+        mqtt_url="mqtt://user:secret-password@mqtt.local:1884",
         mqtt_discovery_prefix="discovery",
         mqtt_state_prefix="state",
         mqtt_client_name="client",
@@ -296,7 +271,8 @@ def test_pretty_config_logging_redacts_password() -> None:
 
     rendered = format_config_for_log(bridge_config)
 
-    assert 'password = "<redacted>"' in rendered
+    assert 'url = "mqtt://<redacted>:<redacted>@mqtt.local:1884"' in rendered
+    assert "user" not in rendered
     assert "secret-password" not in rendered
 
 
@@ -324,8 +300,7 @@ def test_parse_config_logs_path_status_and_redacted_pretty_config(
     _ = path.write_text(
         """
 [mqtt]
-host = "mqtt.local"
-password = "secret-password"
+url = "mqtt://log-user:secret-password@mqtt.local:1883"
 """.strip(),
         encoding="utf-8",
     )
@@ -340,23 +315,23 @@ password = "secret-password"
     configuration = startup_records[0]["configuration"]
     assert isinstance(configuration, str)
     assert "[mqtt]" in configuration
-    assert 'host = "mqtt.local"' in configuration
-    assert 'password = "<redacted>"' in configuration
+    assert 'url = "mqtt://<redacted>:<redacted>@mqtt.local:1883"' in configuration
+    assert "log-user" not in configuration
     assert "secret-password" not in configuration
 
 
 def test_app_config_is_constructible_for_type_checking() -> None:
     app_config = AppConfig()
 
-    assert app_config.mqtt.host == "homeassistant"
+    assert app_config.mqtt.url == DEFAULT_MQTT_URL
 
 
 def test_validation_error_from_environment_names_env_vars(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     _ = path.write_text("", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match="HA_TUX_MQTT_PORT"):
-        _ = load_app_config(path=path, env={"HA_TUX_MQTT_PORT": "not-a-port"})
+    with pytest.raises(ConfigError, match="HA_TUX_MQTT_URL"):
+        _ = load_app_config(path=path, env={"HA_TUX_MQTT_URL": "not-a-url"})
 
 
 def test_config_file_template_text_has_no_active_lines() -> None:
@@ -367,8 +342,8 @@ def test_config_file_template_text_has_no_active_lines() -> None:
 
 def test_config_file_data_is_plain_mapping(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    _ = path.write_text('[mqtt]\nhost = "mqtt.local"\n', encoding="utf-8")
+    _ = path.write_text('[mqtt]\nurl = "mqtt://mqtt.local:1883"\n', encoding="utf-8")
 
     data: dict[str, object] = read_config_file(path)
 
-    assert data == {"mqtt": {"host": "mqtt.local"}}
+    assert data == {"mqtt": {"url": "mqtt://mqtt.local:1883"}}

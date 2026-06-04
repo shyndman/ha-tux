@@ -7,17 +7,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Final, Literal, NamedTuple, Protocol, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from libsh import get_logger
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from xdg_base_dirs import xdg_config_home
 
 from ha_tux.media_player_bridge import DEFAULT_POSITION_POLL_SECONDS
 from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
 
 LOGGER_NAME: Final = "ha_tux"
-DEFAULT_MQTT_HOST: Final = "homeassistant"
-DEFAULT_MQTT_PORT: Final = 1883
+DEFAULT_MQTT_URL: Final = "mqtt://homeassistant:1883"
 DEFAULT_MQTT_DISCOVERY_PREFIX: Final = "homeassistant"
 DEFAULT_MQTT_STATE_PREFIX: Final = "hmd"
 DEFAULT_MQTT_CLIENT_NAME: Final = "ha-tux"
@@ -32,10 +32,9 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 # Uncomment only the settings you want to change.
 
 #[mqtt]
-#host = "homeassistant"
-#port = 1883
-#username = "ha_tux"
-#password = "secret"
+#url = "mqtt://homeassistant:1883"
+# Credentials are part of the URL when needed:
+#url = "mqtt://ha_tux:secret@homeassistant:1883"
 #discovery_prefix = "homeassistant"
 #state_prefix = "hmd"
 #client_name = "ha-tux"
@@ -56,10 +55,7 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class BridgeConfig:
-    mqtt_host: str
-    mqtt_port: int
-    mqtt_username: str | None
-    mqtt_password: str | None
+    mqtt_url: str
     mqtt_discovery_prefix: str
     mqtt_state_prefix: str
     mqtt_client_name: str
@@ -71,13 +67,24 @@ class BridgeConfig:
 class MqttConfig(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
-    host: str = DEFAULT_MQTT_HOST
-    port: int = Field(default=DEFAULT_MQTT_PORT, ge=1, le=65535)
-    username: str | None = None
-    password: str | None = None
+    url: str = DEFAULT_MQTT_URL
     discovery_prefix: str = DEFAULT_MQTT_DISCOVERY_PREFIX
     state_prefix: str = DEFAULT_MQTT_STATE_PREFIX
     client_name: str = DEFAULT_MQTT_CLIENT_NAME
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"mqtt", "mqtts", "ws", "wss"}:
+            raise ValueError("MQTT URL scheme must be mqtt, mqtts, ws, or wss")
+        if parsed.hostname is None:
+            raise ValueError("MQTT URL must include a host")
+        try:
+            _ = parsed.port
+        except ValueError as error:
+            raise ValueError("MQTT URL port must be valid") from error
+        return value
 
 
 class MprisConfig(BaseModel):
@@ -116,10 +123,7 @@ class EnvOverride(NamedTuple):
 
 
 ENV_OVERRIDES: Final = (
-    EnvOverride("HA_TUX_MQTT_HOST", "mqtt", "host"),
-    EnvOverride("HA_TUX_MQTT_PORT", "mqtt", "port"),
-    EnvOverride("HA_TUX_MQTT_USERNAME", "mqtt", "username"),
-    EnvOverride("HA_TUX_MQTT_PASSWORD", "mqtt", "password"),
+    EnvOverride("HA_TUX_MQTT_URL", "mqtt", "url"),
     EnvOverride("HA_TUX_MQTT_DISCOVERY_PREFIX", "mqtt", "discovery_prefix"),
     EnvOverride("HA_TUX_MQTT_STATE_PREFIX", "mqtt", "state_prefix"),
     EnvOverride("HA_TUX_MQTT_CLIENT_NAME", "mqtt", "client_name"),
@@ -247,10 +251,7 @@ def bridge_config_from_app_config(
         raise ValueError("--position-poll-seconds must be greater than 0")
 
     return BridgeConfig(
-        mqtt_host=app_config.mqtt.host,
-        mqtt_port=app_config.mqtt.port,
-        mqtt_username=app_config.mqtt.username,
-        mqtt_password=app_config.mqtt.password,
+        mqtt_url=app_config.mqtt.url,
         mqtt_discovery_prefix=app_config.mqtt.discovery_prefix,
         mqtt_state_prefix=app_config.mqtt.state_prefix,
         mqtt_client_name=app_config.mqtt.client_name,
@@ -263,14 +264,10 @@ def bridge_config_from_app_config(
 
 
 def format_config_for_log(config: BridgeConfig) -> str:
-    password = REDACTED_SECRET if config.mqtt_password is not None else None
     return "\n".join(
         (
             "[mqtt]",
-            f"host = {_toml_value(config.mqtt_host)}",
-            f"port = {config.mqtt_port}",
-            f"username = {_toml_value(config.mqtt_username)}",
-            f"password = {_toml_value(password)}",
+            f"url = {_toml_value(_redact_url_userinfo(config.mqtt_url))}",
             f"discovery_prefix = {_toml_value(config.mqtt_discovery_prefix)}",
             f"state_prefix = {_toml_value(config.mqtt_state_prefix)}",
             f"client_name = {_toml_value(config.mqtt_client_name)}",
@@ -282,6 +279,24 @@ def format_config_for_log(config: BridgeConfig) -> str:
             f"position_poll_seconds = {config.position_poll_seconds}",
         )
     )
+
+
+def _redact_url_userinfo(url: str) -> str:
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return url
+
+    if parsed.username is None and parsed.password is None:
+        return url
+    if "@" not in parsed.netloc:
+        return url
+
+    host_port = parsed.netloc.rsplit("@", maxsplit=1)[1]
+    userinfo = REDACTED_SECRET
+    if parsed.password is not None:
+        userinfo = f"{REDACTED_SECRET}:{REDACTED_SECRET}"
+    return urlunsplit(parsed._replace(netloc=f"{userinfo}@{host_port}"))
 
 
 def _apply_env_overrides(
