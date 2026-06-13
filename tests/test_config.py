@@ -103,6 +103,7 @@ service = "org.example.Player"
 
 [bridge]
 position_poll_seconds = 2.5
+zfs_poll_seconds = 30.0
 """.strip(),
         encoding="utf-8",
     )
@@ -115,6 +116,7 @@ position_poll_seconds = 2.5
     assert app_config.mqtt.client_name == "client"
     assert app_config.mpris.service == "org.example.Player"
     assert app_config.bridge.position_poll_seconds == 2.5
+    assert app_config.bridge.zfs_poll_seconds == 30.0
 
 
 def test_environment_overrides_toml_file_values(tmp_path: Path) -> None:
@@ -145,6 +147,7 @@ position_poll_seconds = 1.5
             "HA_TUX_MQTT_CLIENT_NAME": "env-client",
             "HA_TUX_MPRIS_SERVICE": "org.example.Env",
             "HA_TUX_POSITION_POLL_SECONDS": "3.5",
+            "HA_TUX_ZFS_POLL_SECONDS": "90.0",
         },
     )
 
@@ -154,6 +157,7 @@ position_poll_seconds = 1.5
     assert app_config.mqtt.client_name == "env-client"
     assert app_config.mpris.service == "org.example.Env"
     assert app_config.bridge.position_poll_seconds == 3.5
+    assert app_config.bridge.zfs_poll_seconds == 90.0
 
 
 def test_cli_flags_override_environment_and_toml(
@@ -181,16 +185,20 @@ position_poll_seconds = 1.5
             "org.example.Cli",
             "--position-poll-seconds",
             "4.5",
+            "--zfs-poll-seconds",
+            "120.0",
         ],
         env={
             "HA_TUX_MPRIS_SERVICE": "org.example.Env",
             "HA_TUX_POSITION_POLL_SECONDS": "3.5",
+            "HA_TUX_ZFS_POLL_SECONDS": "90.0",
         },
     )
 
     assert bridge_config.once is True
     assert bridge_config.mpris_service == "org.example.Cli"
     assert bridge_config.position_poll_seconds == 4.5
+    assert bridge_config.zfs_poll_seconds == 120.0
     assert bridge_config.mqtt_client_name == "test-host"
 
 
@@ -240,6 +248,14 @@ def test_non_positive_position_poll_seconds_is_rejected(tmp_path: Path) -> None:
         _ = load_app_config(path=path, env={})
 
 
+def test_non_positive_zfs_poll_seconds_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    _ = path.write_text("[bridge]\nzfs_poll_seconds = 0\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=f"Invalid config file {path}"):
+        _ = load_app_config(path=path, env={})
+
+
 def test_pretty_config_logging_renders_all_non_secret_fields() -> None:
     bridge_config = BridgeConfig(
         mqtt_url="ws://mqtt.local:8080/mqtt",
@@ -248,6 +264,7 @@ def test_pretty_config_logging_renders_all_non_secret_fields() -> None:
         mqtt_client_name="client",
         mpris_service="org.example.Player",
         position_poll_seconds=2.5,
+        zfs_poll_seconds=60.0,
         once=True,
     )
 
@@ -265,7 +282,8 @@ client_name = "client"
 service = "org.example.Player"
 
 [bridge]
-position_poll_seconds = 2.5"""
+position_poll_seconds = 2.5
+zfs_poll_seconds = 60.0"""
     )
 
 
@@ -277,6 +295,7 @@ def test_pretty_config_logging_redacts_password() -> None:
         mqtt_client_name="client",
         mpris_service="org.example.Player",
         position_poll_seconds=2.5,
+        zfs_poll_seconds=60.0,
         once=True,
     )
 

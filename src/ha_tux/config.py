@@ -16,6 +16,7 @@ from xdg_base_dirs import xdg_config_home
 from ha_tux.host_device import default_mqtt_client_name
 from ha_tux.media_player_bridge import DEFAULT_POSITION_POLL_SECONDS
 from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
+from ha_tux.zfs import DEFAULT_ZFS_POLL_SECONDS
 
 LOGGER_NAME: Final = "ha_tux"
 DEFAULT_MQTT_URL: Final = "mqtt://homeassistant:1883"
@@ -45,6 +46,7 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 
 #[bridge]
 #position_poll_seconds = 1.0
+#zfs_poll_seconds = 60.0
 """
 
 ConfigSection = Literal["mqtt", "mpris", "bridge"]
@@ -62,6 +64,7 @@ class BridgeConfig:
     mqtt_client_name: str
     mpris_service: str
     position_poll_seconds: float
+    zfs_poll_seconds: float
     once: bool
 
 
@@ -101,6 +104,10 @@ class BridgeRuntimeConfig(BaseModel):
         default=DEFAULT_POSITION_POLL_SECONDS,
         gt=0,
     )
+    zfs_poll_seconds: float = Field(
+        default=DEFAULT_ZFS_POLL_SECONDS,
+        gt=0,
+    )
 
 
 class AppConfig(BaseModel):
@@ -115,6 +122,7 @@ class ParsedArgs(Protocol):
     once: bool
     service: str | None
     position_poll_seconds: float | None
+    zfs_poll_seconds: float | None
 
 
 class EnvOverride(NamedTuple):
@@ -130,6 +138,7 @@ ENV_OVERRIDES: Final = (
     EnvOverride("HA_TUX_MQTT_CLIENT_NAME", "mqtt", "client_name"),
     EnvOverride("HA_TUX_MPRIS_SERVICE", "mpris", "service"),
     EnvOverride("HA_TUX_POSITION_POLL_SECONDS", "bridge", "position_poll_seconds"),
+    EnvOverride("HA_TUX_ZFS_POLL_SECONDS", "bridge", "zfs_poll_seconds"),
 )
 
 
@@ -220,6 +229,7 @@ def parse_config(
     _ = parser.add_argument("--once", action="store_true")
     _ = parser.add_argument("--service", default=None)
     _ = parser.add_argument("--position-poll-seconds", type=float, default=None)
+    _ = parser.add_argument("--zfs-poll-seconds", type=float, default=None)
     namespace = cast(ParsedArgs, cast(object, parser.parse_args(argv)))
 
     app_config = load_app_config(env=env)
@@ -228,6 +238,7 @@ def parse_config(
         once=namespace.once,
         mpris_service=namespace.service,
         position_poll_seconds=namespace.position_poll_seconds,
+        zfs_poll_seconds=namespace.zfs_poll_seconds,
     )
     get_logger(LOGGER_NAME).info(
         "startup_configuration",
@@ -242,6 +253,7 @@ def bridge_config_from_app_config(
     once: bool,
     mpris_service: str | None = None,
     position_poll_seconds: float | None = None,
+    zfs_poll_seconds: float | None = None,
 ) -> BridgeConfig:
     resolved_position_poll_seconds = (
         app_config.bridge.position_poll_seconds
@@ -250,6 +262,13 @@ def bridge_config_from_app_config(
     )
     if resolved_position_poll_seconds <= 0:
         raise ValueError("--position-poll-seconds must be greater than 0")
+    resolved_zfs_poll_seconds = (
+        app_config.bridge.zfs_poll_seconds
+        if zfs_poll_seconds is None
+        else zfs_poll_seconds
+    )
+    if resolved_zfs_poll_seconds <= 0:
+        raise ValueError("--zfs-poll-seconds must be greater than 0")
 
     return BridgeConfig(
         mqtt_url=app_config.mqtt.url,
@@ -260,6 +279,7 @@ def bridge_config_from_app_config(
         if mpris_service is None
         else mpris_service,
         position_poll_seconds=resolved_position_poll_seconds,
+        zfs_poll_seconds=resolved_zfs_poll_seconds,
         once=once,
     )
 
@@ -278,6 +298,7 @@ def format_config_for_log(config: BridgeConfig) -> str:
             "",
             "[bridge]",
             f"position_poll_seconds = {config.position_poll_seconds}",
+            f"zfs_poll_seconds = {config.zfs_poll_seconds}",
         )
     )
 

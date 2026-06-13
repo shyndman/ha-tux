@@ -52,6 +52,7 @@ def test_build_mqtt_settings_uses_url_config() -> None:
         mqtt_client_name="client",
         mpris_service="org.example.Player",
         position_poll_seconds=1.0,
+        zfs_poll_seconds=60.0,
         once=True,
     )
 
