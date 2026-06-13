@@ -90,6 +90,12 @@ def test_builds_six_sensors_per_pool_with_expected_metadata(
     assert size["device_class"] == "data_size"
     assert size["state_class"] == "measurement"
     assert size["entity_category"] == "diagnostic"
+    assert size["suggested_unit_of_measurement"] == "TiB"
+
+    assert configs["ha_tux_zfs_rpool_allocated"]["suggested_unit_of_measurement"] == (
+        "GiB"
+    )
+    assert configs["ha_tux_zfs_rpool_free"]["suggested_unit_of_measurement"] == "GiB"
 
     used = configs["ha_tux_zfs_rpool_used"]
     assert used["default_entity_id"] == "sensor.zfs_rpool_used"
@@ -97,6 +103,7 @@ def test_builds_six_sensors_per_pool_with_expected_metadata(
     assert used["unit_of_measurement"] == "%"
     assert "device_class" not in used
     assert used["state_class"] == "measurement"
+    assert "suggested_unit_of_measurement" not in used
 
     health = configs["ha_tux_zfs_rpool_health"]
     assert health["default_entity_id"] == "sensor.zfs_rpool_health"

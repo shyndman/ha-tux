@@ -16,6 +16,8 @@ LOGGER = logging.getLogger(__name__)
 
 ENTITY_CATEGORY_DIAGNOSTIC: Final = "diagnostic"
 BYTES_UNIT: Final = "B"
+GIBIBYTES_UNIT: Final = "GiB"
+TEBIBYTES_UNIT: Final = "TiB"
 PERCENT_UNIT: Final = "%"
 DATA_SIZE_DEVICE_CLASS: Final = "data_size"
 MEASUREMENT_STATE_CLASS: Final = "measurement"
@@ -26,34 +28,57 @@ HEALTH_LABEL: Final = "Health"
 _SLUG_PATTERN: Final = re.compile(r"[^a-z0-9_]+")
 
 
+class ZfsSensorInfo(SensorInfo):
+    """Sensor discovery info that also carries a Home Assistant display-unit hint.
+
+    ``ha_mqtt_discoverable``'s ``SensorInfo`` does not model
+    ``suggested_unit_of_measurement``, and pydantic drops unknown kwargs, so the
+    field must be declared here to reach the discovery payload."""
+
+    suggested_unit_of_measurement: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class ZfsMetric:
     key: str
     label: str
     unit: str
     device_class: str | None
+    suggested_unit: str | None
     extract: Callable[[ZpoolStatus], int | None]
 
 
 ZFS_NUMERIC_METRICS: Final = (
     ZfsMetric(
-        "size", "Size", BYTES_UNIT, DATA_SIZE_DEVICE_CLASS, lambda s: s.size_bytes
+        "size",
+        "Size",
+        BYTES_UNIT,
+        DATA_SIZE_DEVICE_CLASS,
+        TEBIBYTES_UNIT,
+        lambda s: s.size_bytes,
     ),
     ZfsMetric(
         "allocated",
         "Allocated",
         BYTES_UNIT,
         DATA_SIZE_DEVICE_CLASS,
+        GIBIBYTES_UNIT,
         lambda s: s.allocated_bytes,
     ),
     ZfsMetric(
-        "free", "Free", BYTES_UNIT, DATA_SIZE_DEVICE_CLASS, lambda s: s.free_bytes
+        "free",
+        "Free",
+        BYTES_UNIT,
+        DATA_SIZE_DEVICE_CLASS,
+        GIBIBYTES_UNIT,
+        lambda s: s.free_bytes,
     ),
-    ZfsMetric("used", "Used", PERCENT_UNIT, None, lambda s: s.capacity_percent),
+    ZfsMetric("used", "Used", PERCENT_UNIT, None, None, lambda s: s.capacity_percent),
     ZfsMetric(
         "fragmentation",
         "Fragmentation",
         PERCENT_UNIT,
+        None,
         None,
         lambda s: s.fragmentation_percent,
     ),
@@ -126,7 +151,7 @@ def build_zfs_pool_publisher(
         )
         metrics: list[tuple[ZfsMetric, Sensor]] = []
         for metric in ZFS_NUMERIC_METRICS:
-            info = SensorInfo(
+            info = ZfsSensorInfo(
                 device=device,
                 unique_id=f"ha_tux_zfs_{slug}_{metric.key}",
                 object_id=f"zfs_{slug}_{metric.key}",
@@ -135,6 +160,7 @@ def build_zfs_pool_publisher(
                 device_class=metric.device_class,
                 state_class=MEASUREMENT_STATE_CLASS,
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                suggested_unit_of_measurement=metric.suggested_unit,
             )
             metrics.append((metric, Sensor(session, info)))
         pools[pool_name] = _PoolSensors(
