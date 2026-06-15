@@ -9,13 +9,15 @@ import ha_tux.config as config_module
 from ha_tux.config import (
     DEFAULT_CONFIG_FILE_TEXT,
     DEFAULT_MQTT_URL,
-    AppConfig,
-    BridgeConfig,
     ConfigError,
+    HaTuxConfig,
+    InputActiveConfig,
+    MprisConfig,
+    MqttConfig,
+    ZfsConfig,
     config_file_path,
     format_config_for_log,
-    load_app_config,
-    parse_config,
+    load_config,
     read_config_file,
     write_default_config_file,
 )
@@ -36,7 +38,7 @@ def test_missing_config_file_returns_defaults_and_writes_template(
 ) -> None:
     path = tmp_path / "ha-tux" / "config.toml"
 
-    app_config = load_app_config(path=path, env={})
+    app_config = load_config(path=path, env={})
 
     assert app_config.mqtt.url == DEFAULT_MQTT_URL
     assert app_config.mqtt.client_name == "test-host"
@@ -100,23 +102,23 @@ client_name = "client"
 
 [mpris]
 service = "org.example.Player"
-
-[bridge]
 position_poll_seconds = 2.5
-zfs_poll_seconds = 30.0
+
+[zfs]
+poll_seconds = 30.0
 """.strip(),
         encoding="utf-8",
     )
 
-    app_config = load_app_config(path=path, env={})
+    app_config = load_config(path=path, env={})
 
     assert app_config.mqtt.url == "mqtts://user:secret@mqtt.local:8883"
     assert app_config.mqtt.discovery_prefix == "discovery"
     assert app_config.mqtt.state_prefix == "state"
     assert app_config.mqtt.client_name == "client"
     assert app_config.mpris.service == "org.example.Player"
-    assert app_config.bridge.position_poll_seconds == 2.5
-    assert app_config.bridge.zfs_poll_seconds == 30.0
+    assert app_config.mpris.position_poll_seconds == 2.5
+    assert app_config.zfs.poll_seconds == 30.0
 
 
 def test_environment_overrides_toml_file_values(tmp_path: Path) -> None:
@@ -131,14 +133,12 @@ client_name = "file-client"
 
 [mpris]
 service = "org.example.File"
-
-[bridge]
 position_poll_seconds = 1.5
 """.strip(),
         encoding="utf-8",
     )
 
-    app_config = load_app_config(
+    app_config = load_config(
         path=path,
         env={
             "HA_TUX_MQTT_URL": "wss://env-user:env-secret@env-host:443/mqtt",
@@ -156,57 +156,15 @@ position_poll_seconds = 1.5
     assert app_config.mqtt.state_prefix == "env-state"
     assert app_config.mqtt.client_name == "env-client"
     assert app_config.mpris.service == "org.example.Env"
-    assert app_config.bridge.position_poll_seconds == 3.5
-    assert app_config.bridge.zfs_poll_seconds == 90.0
-
-
-def test_cli_flags_override_environment_and_toml(
-    monkeypatch: MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    path = tmp_path / "ha-tux" / "config.toml"
-    path.parent.mkdir()
-    _ = path.write_text(
-        """
-[mpris]
-service = "org.example.File"
-
-[bridge]
-position_poll_seconds = 1.5
-""".strip(),
-        encoding="utf-8",
-    )
-
-    bridge_config = parse_config(
-        [
-            "--once",
-            "--service",
-            "org.example.Cli",
-            "--position-poll-seconds",
-            "4.5",
-            "--zfs-poll-seconds",
-            "120.0",
-        ],
-        env={
-            "HA_TUX_MPRIS_SERVICE": "org.example.Env",
-            "HA_TUX_POSITION_POLL_SECONDS": "3.5",
-            "HA_TUX_ZFS_POLL_SECONDS": "90.0",
-        },
-    )
-
-    assert bridge_config.once is True
-    assert bridge_config.mpris_service == "org.example.Cli"
-    assert bridge_config.position_poll_seconds == 4.5
-    assert bridge_config.zfs_poll_seconds == 120.0
-    assert bridge_config.mqtt_client_name == "test-host"
+    assert app_config.mpris.position_poll_seconds == 3.5
+    assert app_config.zfs.poll_seconds == 90.0
 
 
 def test_empty_environment_variables_are_ignored(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     _ = path.write_text('[mqtt]\nurl = "mqtt://file-host:1883"\n', encoding="utf-8")
 
-    app_config = load_app_config(
+    app_config = load_config(
         path=path,
         env={
             "HA_TUX_MQTT_URL": "",
@@ -229,7 +187,7 @@ def test_extra_toml_keys_are_rejected(tmp_path: Path) -> None:
     _ = path.write_text('[mqtt]\nunknown = "value"\n', encoding="utf-8")
 
     with pytest.raises(ConfigError, match=f"Invalid config file {path}"):
-        _ = load_app_config(path=path, env={})
+        _ = load_config(path=path, env={})
 
 
 def test_invalid_url_is_rejected(tmp_path: Path) -> None:
@@ -237,38 +195,62 @@ def test_invalid_url_is_rejected(tmp_path: Path) -> None:
     _ = path.write_text('[mqtt]\nurl = "http://mqtt.local:1883"\n', encoding="utf-8")
 
     with pytest.raises(ConfigError, match=f"Invalid config file {path}"):
-        _ = load_app_config(path=path, env={})
+        _ = load_config(path=path, env={})
 
 
 def test_non_positive_position_poll_seconds_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    _ = path.write_text("[bridge]\nposition_poll_seconds = 0\n", encoding="utf-8")
+    _ = path.write_text("[mpris]\nposition_poll_seconds = 0\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match=f"Invalid config file {path}"):
-        _ = load_app_config(path=path, env={})
+        _ = load_config(path=path, env={})
 
 
 def test_non_positive_zfs_poll_seconds_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
-    _ = path.write_text("[bridge]\nzfs_poll_seconds = 0\n", encoding="utf-8")
+    _ = path.write_text("[zfs]\npoll_seconds = 0\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match=f"Invalid config file {path}"):
-        _ = load_app_config(path=path, env={})
+        _ = load_config(path=path, env={})
+
+
+def test_non_positive_idle_timeout_seconds_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    _ = path.write_text("[input_active]\nidle_timeout_seconds = 0\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=f"Invalid config file {path}"):
+        _ = load_config(path=path, env={})
+
+
+def test_idle_timeout_env_override(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    _ = path.write_text('[mqtt]\nurl = "mqtt://h:1883"\n', encoding="utf-8")
+
+    config = load_config(
+        path=path,
+        env={"HA_TUX_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS": "30"},
+    )
+
+    assert config.input_active.idle_timeout_seconds == 30.0
 
 
 def test_pretty_config_logging_renders_all_non_secret_fields() -> None:
-    bridge_config = BridgeConfig(
-        mqtt_url="ws://mqtt.local:8080/mqtt",
-        mqtt_discovery_prefix="discovery",
-        mqtt_state_prefix="state",
-        mqtt_client_name="client",
-        mpris_service="org.example.Player",
-        position_poll_seconds=2.5,
-        zfs_poll_seconds=60.0,
-        once=True,
+    config = HaTuxConfig(
+        mqtt=MqttConfig(
+            url="ws://mqtt.local:8080/mqtt",
+            discovery_prefix="discovery",
+            state_prefix="state",
+            client_name="client",
+        ),
+        mpris=MprisConfig(
+            service="org.example.Player",
+            position_poll_seconds=2.5,
+        ),
+        zfs=ZfsConfig(poll_seconds=60.0),
+        input_active=InputActiveConfig(idle_timeout_seconds=60.0),
     )
 
-    rendered = format_config_for_log(bridge_config)
+    rendered = format_config_for_log(config)
 
     assert (
         rendered
@@ -280,26 +262,27 @@ client_name = "client"
 
 [mpris]
 service = "org.example.Player"
-
-[bridge]
 position_poll_seconds = 2.5
-zfs_poll_seconds = 60.0"""
+
+[zfs]
+poll_seconds = 60.0
+
+[input_active]
+idle_timeout_seconds = 60.0"""
     )
 
 
 def test_pretty_config_logging_redacts_password() -> None:
-    bridge_config = BridgeConfig(
-        mqtt_url="mqtt://user:secret-password@mqtt.local:1884",
-        mqtt_discovery_prefix="discovery",
-        mqtt_state_prefix="state",
-        mqtt_client_name="client",
-        mpris_service="org.example.Player",
-        position_poll_seconds=2.5,
-        zfs_poll_seconds=60.0,
-        once=True,
+    config = HaTuxConfig(
+        mqtt=MqttConfig(
+            url="mqtt://user:secret-password@mqtt.local:1884",
+            discovery_prefix="discovery",
+            state_prefix="state",
+            client_name="client",
+        ),
     )
 
-    rendered = format_config_for_log(bridge_config)
+    rendered = format_config_for_log(config)
 
     assert 'url = "mqtt://<redacted>:<redacted>@mqtt.local:1884"' in rendered
     assert "user" not in rendered
@@ -314,7 +297,7 @@ class CapturingLogger:
         self.records.append((event, kwargs))
 
 
-def test_parse_config_logs_path_status_and_redacted_pretty_config(
+def test_load_config_logs_path_status_and_redacted_pretty_config(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -335,7 +318,7 @@ url = "mqtt://log-user:secret-password@mqtt.local:1883"
         encoding="utf-8",
     )
 
-    _ = parse_config(["--once"], env={})
+    _ = load_config(path=path, env={})
 
     assert ("config_file_loaded", {"path": str(path)}) in logger.records
     startup_records = [
@@ -351,11 +334,11 @@ url = "mqtt://log-user:secret-password@mqtt.local:1883"
     assert "secret-password" not in configuration
 
 
-def test_app_config_is_constructible_for_type_checking() -> None:
-    app_config = AppConfig()
+def test_ha_tux_config_is_constructible_for_type_checking() -> None:
+    config = HaTuxConfig()
 
-    assert app_config.mqtt.url == DEFAULT_MQTT_URL
-    assert app_config.mqtt.client_name == "test-host"
+    assert config.mqtt.url == DEFAULT_MQTT_URL
+    assert config.mqtt.client_name == "test-host"
 
 
 def test_validation_error_from_environment_names_env_vars(tmp_path: Path) -> None:
@@ -363,7 +346,7 @@ def test_validation_error_from_environment_names_env_vars(tmp_path: Path) -> Non
     _ = path.write_text("", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="HA_TUX_MQTT_URL"):
-        _ = load_app_config(path=path, env={"HA_TUX_MQTT_URL": "not-a-url"})
+        _ = load_config(path=path, env={"HA_TUX_MQTT_URL": "not-a-url"})
 
 
 def test_config_file_template_text_has_no_active_lines() -> None:

@@ -16,10 +16,9 @@ IDLE_MONITOR_SERVICE_NAME: Final = "org.gnome.Mutter.IdleMonitor"
 IDLE_MONITOR_OBJECT_PATH: Final = "/org/gnome/Mutter/IdleMonitor/Core"
 IDLE_MONITOR_INTERFACE: Final = "org.gnome.Mutter.IdleMonitor"
 
-# "Input active" is true while the seat has seen input within this window. The
-# threshold is baked in rather than published, so Home Assistant consumes a clean
-# binary state instead of an ever-climbing idle counter.
-INPUT_ACTIVE_IDLE_TIMEOUT_MS: Final = 60_000
+# The timeout is the input window before the seat is reported "inactive".
+DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS: Final = 60.0
+MILLISECONDS_PER_SECOND: Final = 1000
 
 OnInputActiveChange = Callable[[bool], Awaitable[None]]
 

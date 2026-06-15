@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import argparse
 import os
 import tomllib
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
-from typing import ClassVar, Final, Literal, NamedTuple, Protocol, cast
+from typing import ClassVar, Final, Literal, NamedTuple, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from libsh import get_logger
@@ -14,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from xdg_base_dirs import xdg_config_home
 
 from ha_tux.host_device import default_mqtt_client_name
+from ha_tux.idle_monitor import DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS
 from ha_tux.media_player_bridge import DEFAULT_POSITION_POLL_SECONDS
 from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
 from ha_tux.zfs import DEFAULT_ZFS_POLL_SECONDS
@@ -43,29 +42,20 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 
 #[mpris]
 #service = "org.mpris.MediaPlayer2.playerctld"
-
-#[bridge]
 #position_poll_seconds = 1.0
-#zfs_poll_seconds = 60.0
+
+#[zfs]
+#poll_seconds = 60.0
+
+#[input_active]
+#idle_timeout_seconds = 60.0
 """
 
-ConfigSection = Literal["mqtt", "mpris", "bridge"]
+ConfigSection = Literal["mqtt", "mpris", "zfs", "input_active"]
 
 
 class ConfigError(ValueError):
     """Raised when file, environment, or CLI configuration is invalid."""
-
-
-@dataclass(frozen=True, slots=True)
-class BridgeConfig:
-    mqtt_url: str
-    mqtt_discovery_prefix: str
-    mqtt_state_prefix: str
-    mqtt_client_name: str
-    mpris_service: str
-    position_poll_seconds: float
-    zfs_poll_seconds: float
-    once: bool
 
 
 class MqttConfig(BaseModel):
@@ -95,34 +85,37 @@ class MprisConfig(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     service: str = PLAYERCTLD_SERVICE_NAME
-
-
-class BridgeRuntimeConfig(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-
     position_poll_seconds: float = Field(
         default=DEFAULT_POSITION_POLL_SECONDS,
         gt=0,
     )
-    zfs_poll_seconds: float = Field(
+
+
+class ZfsConfig(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    poll_seconds: float = Field(
         default=DEFAULT_ZFS_POLL_SECONDS,
         gt=0,
     )
 
 
-class AppConfig(BaseModel):
+class InputActiveConfig(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    idle_timeout_seconds: float = Field(
+        default=DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS,
+        gt=0,
+    )
+
+
+class HaTuxConfig(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     mqtt: MqttConfig = Field(default_factory=MqttConfig)
     mpris: MprisConfig = Field(default_factory=MprisConfig)
-    bridge: BridgeRuntimeConfig = Field(default_factory=BridgeRuntimeConfig)
-
-
-class ParsedArgs(Protocol):
-    once: bool
-    service: str | None
-    position_poll_seconds: float | None
-    zfs_poll_seconds: float | None
+    zfs: ZfsConfig = Field(default_factory=ZfsConfig)
+    input_active: InputActiveConfig = Field(default_factory=InputActiveConfig)
 
 
 class EnvOverride(NamedTuple):
@@ -137,8 +130,13 @@ ENV_OVERRIDES: Final = (
     EnvOverride("HA_TUX_MQTT_STATE_PREFIX", "mqtt", "state_prefix"),
     EnvOverride("HA_TUX_MQTT_CLIENT_NAME", "mqtt", "client_name"),
     EnvOverride("HA_TUX_MPRIS_SERVICE", "mpris", "service"),
-    EnvOverride("HA_TUX_POSITION_POLL_SECONDS", "bridge", "position_poll_seconds"),
-    EnvOverride("HA_TUX_ZFS_POLL_SECONDS", "bridge", "zfs_poll_seconds"),
+    EnvOverride("HA_TUX_POSITION_POLL_SECONDS", "mpris", "position_poll_seconds"),
+    EnvOverride("HA_TUX_ZFS_POLL_SECONDS", "zfs", "poll_seconds"),
+    EnvOverride(
+        "HA_TUX_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS",
+        "input_active",
+        "idle_timeout_seconds",
+    ),
 )
 
 
@@ -175,10 +173,10 @@ def read_config_file(path: Path) -> dict[str, object]:
     return cast(dict[str, object], config_data)
 
 
-def load_app_config(
+def load_config(
     path: Path | None = None,
     env: Mapping[str, str] = os.environ,
-) -> AppConfig:
+) -> HaTuxConfig:
     config_path = path if path is not None else config_file_path()
     logger = get_logger(LOGGER_NAME)
 
@@ -203,102 +201,48 @@ def load_app_config(
         logger.info("config_file_absent", path=os.fspath(config_path))
 
     try:
-        file_config = AppConfig.model_validate(file_data)
+        file_config = HaTuxConfig.model_validate(file_data)
     except ValidationError as error:
         raise ConfigError(f"Invalid config file {config_path}: {error}") from error
 
     env_config_data = file_config.model_dump()
     env_names = _apply_env_overrides(env_config_data, env)
     if not env_names:
-        return file_config
+        config = file_config
+    else:
+        try:
+            config = HaTuxConfig.model_validate(env_config_data)
+        except ValidationError as error:
+            names = ", ".join(env_names)
+            raise ConfigError(
+                f"Invalid environment configuration from {names}: {error}"
+            ) from error
 
-    try:
-        return AppConfig.model_validate(env_config_data)
-    except ValidationError as error:
-        names = ", ".join(env_names)
-        raise ConfigError(
-            f"Invalid environment configuration from {names}: {error}"
-        ) from error
-
-
-def parse_config(
-    argv: Sequence[str] | None = None,
-    env: Mapping[str, str] = os.environ,
-) -> BridgeConfig:
-    parser = argparse.ArgumentParser(prog="ha-tux")
-    _ = parser.add_argument("--once", action="store_true")
-    _ = parser.add_argument("--service", default=None)
-    _ = parser.add_argument("--position-poll-seconds", type=float, default=None)
-    _ = parser.add_argument("--zfs-poll-seconds", type=float, default=None)
-    namespace = cast(ParsedArgs, cast(object, parser.parse_args(argv)))
-
-    app_config = load_app_config(env=env)
-    config = bridge_config_from_app_config(
-        app_config,
-        once=namespace.once,
-        mpris_service=namespace.service,
-        position_poll_seconds=namespace.position_poll_seconds,
-        zfs_poll_seconds=namespace.zfs_poll_seconds,
-    )
-    get_logger(LOGGER_NAME).info(
+    logger.info(
         "startup_configuration",
         configuration=f"\n{format_config_for_log(config)}",
     )
     return config
 
 
-def bridge_config_from_app_config(
-    app_config: AppConfig,
-    *,
-    once: bool,
-    mpris_service: str | None = None,
-    position_poll_seconds: float | None = None,
-    zfs_poll_seconds: float | None = None,
-) -> BridgeConfig:
-    resolved_position_poll_seconds = (
-        app_config.bridge.position_poll_seconds
-        if position_poll_seconds is None
-        else position_poll_seconds
-    )
-    if resolved_position_poll_seconds <= 0:
-        raise ValueError("--position-poll-seconds must be greater than 0")
-    resolved_zfs_poll_seconds = (
-        app_config.bridge.zfs_poll_seconds
-        if zfs_poll_seconds is None
-        else zfs_poll_seconds
-    )
-    if resolved_zfs_poll_seconds <= 0:
-        raise ValueError("--zfs-poll-seconds must be greater than 0")
-
-    return BridgeConfig(
-        mqtt_url=app_config.mqtt.url,
-        mqtt_discovery_prefix=app_config.mqtt.discovery_prefix,
-        mqtt_state_prefix=app_config.mqtt.state_prefix,
-        mqtt_client_name=app_config.mqtt.client_name,
-        mpris_service=app_config.mpris.service
-        if mpris_service is None
-        else mpris_service,
-        position_poll_seconds=resolved_position_poll_seconds,
-        zfs_poll_seconds=resolved_zfs_poll_seconds,
-        once=once,
-    )
-
-
-def format_config_for_log(config: BridgeConfig) -> str:
+def format_config_for_log(config: HaTuxConfig) -> str:
     return "\n".join(
         (
             "[mqtt]",
-            f"url = {_toml_value(_redact_url_userinfo(config.mqtt_url))}",
-            f"discovery_prefix = {_toml_value(config.mqtt_discovery_prefix)}",
-            f"state_prefix = {_toml_value(config.mqtt_state_prefix)}",
-            f"client_name = {_toml_value(config.mqtt_client_name)}",
+            f"url = {_toml_value(_redact_url_userinfo(config.mqtt.url))}",
+            f"discovery_prefix = {_toml_value(config.mqtt.discovery_prefix)}",
+            f"state_prefix = {_toml_value(config.mqtt.state_prefix)}",
+            f"client_name = {_toml_value(config.mqtt.client_name)}",
             "",
             "[mpris]",
-            f"service = {_toml_value(config.mpris_service)}",
+            f"service = {_toml_value(config.mpris.service)}",
+            f"position_poll_seconds = {config.mpris.position_poll_seconds}",
             "",
-            "[bridge]",
-            f"position_poll_seconds = {config.position_poll_seconds}",
-            f"zfs_poll_seconds = {config.zfs_poll_seconds}",
+            "[zfs]",
+            f"poll_seconds = {config.zfs.poll_seconds}",
+            "",
+            "[input_active]",
+            f"idle_timeout_seconds = {config.input_active.idle_timeout_seconds}",
         )
     )
 
