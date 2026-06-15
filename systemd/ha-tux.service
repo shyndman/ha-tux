@@ -1,5 +1,5 @@
 [Unit]
-Description=Bridge local MPRIS media state to Home Assistant
+Description=Publish host MPRIS, ZFS, and input-presence state to Home Assistant
 
 [Service]
 Type=exec
