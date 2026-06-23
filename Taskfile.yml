@@ -2,30 +2,39 @@ version: '3'
 
 vars:
   PROJECT_DIR: '{{.TASKFILE_DIR}}'
-  USER_SYSTEMD_DIR: '{{.HOME}}/.config/systemd/user'
+  SYSTEM_SYSTEMD_DIR: /etc/systemd/system
   SERVICE_NAME: ha-tux.service
   SERVICE_SOURCE: systemd/ha-tux.service
-  SERVICE_TARGET: '{{.USER_SYSTEMD_DIR}}/{{.SERVICE_NAME}}'
+  SERVICE_TARGET: '{{.SYSTEM_SYSTEMD_DIR}}/{{.SERVICE_NAME}}'
+  OPT_DIR: /opt/ha-tux
 
 tasks:
   install:
-    desc: Install and start the user service
+    desc: Install and start the hardened system service
     cmds:
-      - mkdir -p "{{.USER_SYSTEMD_DIR}}"
-      - PROJECT_DIR="{{.PROJECT_DIR}}" SERVICE_SOURCE="{{.SERVICE_SOURCE}}" SERVICE_TARGET="{{.SERVICE_TARGET}}" uv run python ./scripts/render_service.py
-      - chmod 0644 "{{.SERVICE_TARGET}}"
-      - systemctl --user daemon-reload
-      - systemctl --user enable "{{.SERVICE_NAME}}"
-      - systemctl --user restart "{{.SERVICE_NAME}}"
+      # Retire the old --user unit if present (clean cutover from the previous deployment model).
+      - systemctl --user disable --now {{.SERVICE_NAME}} 2>/dev/null || true
+      - rm -f "{{.HOME}}/.config/systemd/user/{{.SERVICE_NAME}}"
+      - systemctl --user daemon-reload || true
+      - test -d {{.OPT_DIR}} || sudo install -d -o "$(id -un)" -g "$(id -gn)" {{.OPT_DIR}}
+      # System python is 3.14; the project needs 3.13. Install a uv-managed 3.13 *under /opt*
+      # (not the default ~/.local store) so the venv interpreter has no /home dependency that
+      # ProtectHome=tmpfs would hide.
+      - UV_PYTHON_INSTALL_DIR={{.OPT_DIR}}/python uv python install 3.13
+      - UV_PYTHON_INSTALL_DIR={{.OPT_DIR}}/python UV_PROJECT_ENVIRONMENT={{.OPT_DIR}}/venv uv sync --no-dev --no-editable --frozen --python-preference only-managed --python 3.13
+      - sudo install -m 0644 "{{.SERVICE_SOURCE}}" "{{.SERVICE_TARGET}}"
+      - sudo systemctl daemon-reload
+      - sudo systemctl enable {{.SERVICE_NAME}}
+      - sudo systemctl restart {{.SERVICE_NAME}}
 
   uninstall:
-    desc: Stop and remove the user service
+    desc: Stop and remove the system service
     cmds:
-      - systemctl --user disable --now "{{.SERVICE_NAME}}" || true
-      - rm -f "{{.SERVICE_TARGET}}"
-      - systemctl --user daemon-reload
+      - sudo systemctl disable --now {{.SERVICE_NAME}} || true
+      - sudo rm -f "{{.SERVICE_TARGET}}"
+      - sudo systemctl daemon-reload
 
   logs:
     desc: Display the service logs
     cmds:
-      - journalctl --user -o cat --no-pager -u ha-tux.service {{.CLI_ARGS}}
+      - journalctl -o cat --no-pager -u ha-tux.service {{.CLI_ARGS}}

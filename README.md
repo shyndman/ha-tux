@@ -2,10 +2,12 @@
 
 Bridges a Linux host to Home Assistant over MQTT.
 
+It favors least-privilege over convenience: the daemon exposes a remotely triggerable command path, so it runs locked down rather than wide open.
+
 - **MPRIS → media_player**: exposes the host's MPRIS players as a HA media player entity, with album art.
 - **ZFS pools**: publishes pool state as HA entities.
 - **Package updates**: publishes apt and Homebrew "updates available" as HA update entities (Homebrew gets a working Install button). The full pending-package list lives in a per-manager secret GitHub gist surfaced through a chhoto shortlink.
 
-Runs as a systemd unit (`systemd/ha-tux.service`), one instance per host.
+Installed via `task install` into a self-contained venv at `/opt/ha-tux` and run as a hardened **system** service (`systemd/ha-tux.service`, `User=shyndman`), one instance per host. The unit is deliberately sandboxed (`ProtectHome=tmpfs`, `ProtectSystem=strict`, a restricted syscall filter, and a tight bind allowlist) — a conscious effort to avoid the gaping holes other HA-on-Linux bridges tend to ship.
 
 The package-updates source needs the `gh` (gist scope) and `chhoto` CLIs on `PATH`; runtime state persists in `$XDG_STATE_HOME/ha-tux/state.toml`.

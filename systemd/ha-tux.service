@@ -1,14 +1,54 @@
 [Unit]
 Description=Publish host MPRIS, ZFS, and input-presence state to Home Assistant
+# Session D-Bus at /run/user/1000/bus is provided by the user manager (kept alive by linger);
+# MPRIS needs it, so order after it. MQTT needs the network.
+After=network-online.target user@1000.service
+Wants=network-online.target
 
 [Service]
 Type=exec
-WorkingDirectory=__PROJECT_DIR__
-Environment=PATH=/home/linuxbrew/.linuxbrew/bin:%h/.local/bin:%h/bin:/usr/local/bin:/usr/bin:/bin
+User=shyndman
+WorkingDirectory=/opt/ha-tux
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 Environment=LOG_LEVEL=debug
-ExecStart=__EXEC_START__
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+# sdbus's default bus follows sd_bus_default(), which for a system-service process picks the
+# SYSTEM bus and ignores DBUS_SESSION_BUS_ADDRESS. This forces it onto the session bus so the
+# MPRIS player and the GNOME idle monitor (both session-bus names) resolve.
+Environment=DBUS_STARTER_BUS_TYPE=session
+ExecStart=/opt/ha-tux/venv/bin/ha-tux
 Restart=on-failure
 RestartSec=1
 
+# Hardening — shrink the blast radius of the MQTT command path.
+# This is a system service (not systemctl --user) on purpose: --user sandboxing is forced into a
+# user namespace, and ZFS pool reads return "no pools available" inside any user namespace. A
+# system manager builds the mount namespace WITHOUT a user namespace, so the sandbox and ZFS
+# coexist. NoNewPrivileges stays no: a planned apt-upgrade Install path runs sudo and needs setuid.
+NoNewPrivileges=no
+ProtectSystem=strict
+ProtectHome=tmpfs
+# ProtectHome=tmpfs overmounts /home, /root, /run/user with empty tmpfs. ReadWritePaths/ReadOnlyPaths
+# only *remount* an already-visible path; they cannot bring back a path the tmpfs hid. BindPaths/
+# BindReadOnlyPaths bind the real host path into the namespace, so they re-expose the carve-outs.
+BindPaths=/home/shyndman/.config/ha-tux
+BindPaths=/home/shyndman/.local/state/ha-tux
+BindPaths=/home/linuxbrew/.linuxbrew
+BindPaths=/home/shyndman/.cache/Homebrew
+BindReadOnlyPaths=/run/user/1000/bus
+# gh reads the github.com account record here; the OAuth token itself lives in the gnome-keyring
+# secret service, reached over the session bus bound above. Read-only: gist ops only read auth.
+BindReadOnlyPaths=/home/shyndman/.config/gh
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
