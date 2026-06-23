@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import date
 
 import aiomqtt
@@ -14,7 +14,9 @@ from ha_mqtt_discoverable.sensors import Update, UpdateInfo
 from ha_tux.gist import publish_gist, publish_shortlink
 from ha_tux.run_state import StateStore
 from ha_tux.software_update.detect import (
+    APT_UPGRADE_UNIT,
     SENTINEL_DATE,
+    SYSTEMCTL_PATH,
     UpdateReport,
     _run,
     entity_title,
@@ -51,7 +53,7 @@ class ManagerPublisher:
         hostname: str,
         slug: str,
         description: str,
-        brew: str | None = None,
+        install_cmd: Sequence[str] | None = None,
     ) -> None:
         self.manager: str = manager
         self.label: str = label
@@ -60,7 +62,9 @@ class ManagerPublisher:
         self.hostname: str = hostname
         self.slug: str = slug
         self.description: str = description
-        self.brew: str | None = brew
+        self.install_cmd: tuple[str, ...] | None = (
+            tuple(install_cmd) if install_cmd is not None else None
+        )
         self._lock: asyncio.Lock = asyncio.Lock()
         self._installed: str = SENTINEL_DATE
         self._latest: str = SENTINEL_DATE
@@ -71,8 +75,8 @@ class ManagerPublisher:
             object_id=f"software_update_{manager}",
             name=f"{label.capitalize()} updates",
         )
-        # brew is user-owned, so it gets an Install button; apt is read-only.
-        callback = self.on_install if brew is not None else None
+        # An install command means an Install button; read-only entities pass None.
+        callback = self.on_install if install_cmd is not None else None
         self.entity: Update = Update(session, info, callback)
 
     async def publish(self) -> None:
@@ -125,18 +129,20 @@ class ManagerPublisher:
 
     async def on_install(self, sender: Update, _message: aiomqtt.Message) -> None:
         async with self._lock:
-            if self.brew is None:
+            if self.install_cmd is None:
                 return
             await sender.set_state(
                 installed=self._installed, latest=self._latest, in_progress=True
             )
-            rc, out, err = await _run([self.brew, "upgrade"])
+            rc, out, err = await _run(self.install_cmd)
             LOGGER.info(
                 "software_update_install_finished",
                 extra={"manager": self.manager, "returncode": rc},
             )
             if rc != 0:
-                LOGGER.warning("brew upgrade failed: %s", (err or out).strip())
+                LOGGER.warning(
+                    "%s install failed: %s", self.manager, (err or out).strip()
+                )
             await self._publish_unlocked()
 
 
@@ -171,6 +177,7 @@ def build_software_update_publisher(
                 hostname=hostname,
                 slug=f"{host_slug}-apt-updates",
                 description=f"ha-tux apt updates on {hostname}",
+                install_cmd=(SYSTEMCTL_PATH, "start", "--wait", APT_UPGRADE_UNIT),
             )
         )
 
@@ -187,7 +194,7 @@ def build_software_update_publisher(
                 hostname=hostname,
                 slug=f"{host_slug}-brew-updates",
                 description=f"ha-tux homebrew updates on {hostname}",
-                brew=brew,
+                install_cmd=(brew, "upgrade"),
             )
         )
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from datetime import date
 from pathlib import Path
 from typing import cast
@@ -109,7 +109,7 @@ def _make(
     *,
     manager: str = "apt",
     label: str = "apt",
-    brew: str | None = None,
+    install_cmd: Sequence[str] | None = None,
 ) -> tuple[ManagerPublisher, StubUpdate]:
     store = StateStore.load(tmp_path / "state.toml")
     mp = ManagerPublisher(
@@ -122,7 +122,7 @@ def _make(
         hostname="host",
         slug=f"host-{manager}-updates",
         description="desc",
-        brew=brew,
+        install_cmd=install_cmd,
     )
     stub = StubUpdate()
     mp.entity = cast(Update, cast(object, stub))
@@ -194,7 +194,11 @@ def test_brew_install_marks_in_progress_then_resolves(
         manager="brew", label="homebrew", count=0, packages=(), casks=0, pinned=0
     )
     mp, stub = _make(
-        tmp_path, report, manager="brew", label="homebrew", brew="/usr/bin/brew"
+        tmp_path,
+        report,
+        manager="brew",
+        label="homebrew",
+        install_cmd=("/usr/bin/brew", "upgrade"),
     )
 
     captured: list[list[str]] = []
@@ -220,3 +224,41 @@ def test_brew_install_marks_in_progress_then_resolves(
         == stub.states[1]["latest"]
         == date.today().isoformat()
     )
+
+
+def test_apt_install_triggers_upgrade_unit(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _patch_publishers(monkeypatch, "https://go.don.haus/host-apt-updates")
+    report = UpdateReport(manager="apt", label="apt", count=0, packages=())
+    mp, stub = _make(
+        tmp_path,
+        report,
+        manager="apt",
+        label="apt",
+        install_cmd=(
+            "/usr/bin/systemctl",
+            "start",
+            "--wait",
+            "ha-tux-apt-upgrade.service",
+        ),
+    )
+
+    captured: list[list[str]] = []
+
+    async def fake_run(cmd: object, *, env: object = None) -> tuple[int, str, str]:
+        del env
+        captured.append(list(cast(list[str], cmd)))
+        return (0, "", "")
+
+    monkeypatch.setattr(publisher, "_run", fake_run)
+
+    message = cast(aiomqtt.Message, object())
+    asyncio.run(mp.on_install(cast(Update, cast(object, stub)), message))
+
+    assert captured == [
+        ["/usr/bin/systemctl", "start", "--wait", "ha-tux-apt-upgrade.service"]
+    ]
+    assert len(stub.states) == 2
+    assert stub.states[0]["in_progress"] is True
+    assert stub.states[1]["in_progress"] is False

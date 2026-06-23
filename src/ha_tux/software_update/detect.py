@@ -16,9 +16,11 @@ LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "APT_CHECK_PATH",
+    "APT_UPGRADE_UNIT",
     "DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS",
     "REBOOT_REQUIRED_PATH",
     "REBOOT_REQUIRED_PKGS_PATH",
+    "SYSTEMCTL_PATH",
     "SENTINEL_DATE",
     "PackageUpdate",
     "UpdateReport",
@@ -42,6 +44,8 @@ __all__ = [
 DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS: Final = 21600.0  # 6 hours
 SENTINEL_DATE: Final = "1970-01-01"
 APT_CHECK_PATH: Final = "/usr/lib/update-notifier/apt-check"
+SYSTEMCTL_PATH: Final = "/usr/bin/systemctl"
+APT_UPGRADE_UNIT: Final = "ha-tux-apt-upgrade.service"
 REBOOT_REQUIRED_PATH: Final = "/run/reboot-required"
 REBOOT_REQUIRED_PKGS_PATH: Final = "/run/reboot-required.pkgs"
 

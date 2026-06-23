@@ -1,0 +1,11 @@
+[Unit]
+Description=Apply apt package upgrades for ha-tux
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DEBIAN_FRONTEND=noninteractive
+TimeoutStartSec=1800
+ExecStartPre=/usr/bin/apt-get update
+ExecStart=/usr/bin/apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade

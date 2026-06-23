@@ -9,6 +9,9 @@ vars:
   HOST_USER: ha-tux
   HOST_HOME: /var/lib/ha-tux
   BREW_PREFIX: /home/linuxbrew/.linuxbrew
+  APT_UPGRADE_UNIT: ha-tux-apt-upgrade.service
+  POLKIT_RULES_DIR: /etc/polkit-1/rules.d
+  POLKIT_RULE: 49-ha-tux-apt-upgrade.rules
 
 tasks:
   install:
@@ -42,6 +45,8 @@ tasks:
       # Install and start both units.
       - sudo install -m 0644 "systemd/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}"
       - sudo install -m 0644 "systemd/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}"
+      - sudo install -m 0644 "systemd/{{.APT_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.APT_UPGRADE_UNIT}}"
+      - sudo install -m 0644 "polkit/{{.POLKIT_RULE}}" "{{.POLKIT_RULES_DIR}}/{{.POLKIT_RULE}}"
       - sudo systemctl daemon-reload
       - sudo systemctl enable {{.SESSION_UNIT}} {{.HOST_UNIT}}
       - sudo systemctl restart {{.SESSION_UNIT}} {{.HOST_UNIT}}
@@ -50,7 +55,8 @@ tasks:
     desc: Stop and remove both services
     cmds:
       - sudo systemctl disable --now {{.SESSION_UNIT}} {{.HOST_UNIT}} || true
-      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}"
+      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.APT_UPGRADE_UNIT}}"
+      - sudo rm -f "{{.POLKIT_RULES_DIR}}/{{.POLKIT_RULE}}"
       - sudo systemctl daemon-reload
 
   logs:
