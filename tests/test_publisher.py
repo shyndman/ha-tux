@@ -186,7 +186,7 @@ def test_query_failure_marks_unavailable(
     assert stub.states == []
 
 
-def test_brew_install_sets_progress_then_resolves(
+def test_brew_install_marks_in_progress_then_resolves(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     _patch_publishers(monkeypatch, "https://go.don.haus/host-brew-updates")
@@ -209,10 +209,14 @@ def test_brew_install_sets_progress_then_resolves(
     message = cast(aiomqtt.Message, object())
     asyncio.run(mp.on_install(cast(Update, cast(object, stub)), message))
 
-    assert stub.progress == [0]
+    assert stub.progress == []
     assert captured == [["/usr/bin/brew", "upgrade"]]
-    assert len(stub.states) == 1
-    state = stub.states[0]
-    assert state["title"] == "homebrew: Up to date"
-    assert state["in_progress"] is False
-    assert state["installed"] == state["latest"] == date.today().isoformat()
+    assert len(stub.states) == 2
+    assert stub.states[0]["in_progress"] is True
+    assert stub.states[1]["title"] == "homebrew: Up to date"
+    assert stub.states[1]["in_progress"] is False
+    assert (
+        stub.states[1]["installed"]
+        == stub.states[1]["latest"]
+        == date.today().isoformat()
+    )

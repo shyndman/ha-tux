@@ -14,6 +14,7 @@ from ha_mqtt_discoverable.sensors import Update, UpdateInfo
 from ha_tux.gist import publish_gist, publish_shortlink
 from ha_tux.run_state import StateStore
 from ha_tux.software_update.detect import (
+    SENTINEL_DATE,
     UpdateReport,
     _run,
     entity_title,
@@ -61,6 +62,8 @@ class ManagerPublisher:
         self.description: str = description
         self.brew: str | None = brew
         self._lock: asyncio.Lock = asyncio.Lock()
+        self._installed: str = SENTINEL_DATE
+        self._latest: str = SENTINEL_DATE
 
         info = UpdateInfo(
             device=device,
@@ -91,6 +94,7 @@ class ManagerPublisher:
         st = self.state_store.get(self.manager)
         last_clean = _parse_date(st.last_clean_date)
         installed, latest = version_pair(report.count, last_clean, today)
+        self._installed, self._latest = installed, latest
 
         if report.count == 0:
             self.state_store.update(self.manager, last_clean_date=refresh)
@@ -123,7 +127,9 @@ class ManagerPublisher:
         async with self._lock:
             if self.brew is None:
                 return
-            await sender.set_progress(0)
+            await sender.set_state(
+                installed=self._installed, latest=self._latest, in_progress=True
+            )
             rc, out, err = await _run([self.brew, "upgrade"])
             LOGGER.info(
                 "software_update_install_finished",
