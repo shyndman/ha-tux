@@ -3,38 +3,55 @@ version: '3'
 vars:
   PROJECT_DIR: '{{.TASKFILE_DIR}}'
   SYSTEM_SYSTEMD_DIR: /etc/systemd/system
-  SERVICE_NAME: ha-tux.service
-  SERVICE_SOURCE: systemd/ha-tux.service
-  SERVICE_TARGET: '{{.SYSTEM_SYSTEMD_DIR}}/{{.SERVICE_NAME}}'
+  SESSION_UNIT: ha-tux-session.service
+  HOST_UNIT: ha-tux-host.service
   OPT_DIR: /opt/ha-tux
+  HOST_USER: ha-tux
+  HOST_HOME: /var/lib/ha-tux
+  BREW_PREFIX: /home/linuxbrew/.linuxbrew
 
 tasks:
   install:
-    desc: Install and start the hardened system service
+    desc: Install and start the session and host services
     cmds:
-      # Retire the old --user unit if present (clean cutover from the previous deployment model).
-      - systemctl --user disable --now {{.SERVICE_NAME}} 2>/dev/null || true
-      - rm -f "{{.HOME}}/.config/systemd/user/{{.SERVICE_NAME}}"
+      # Retire the old single deployments (clean cutover).
+      - systemctl --user disable --now ha-tux.service 2>/dev/null || true
+      - rm -f "{{.HOME}}/.config/systemd/user/ha-tux.service"
       - systemctl --user daemon-reload || true
+      - sudo systemctl disable --now ha-tux.service 2>/dev/null || true
+      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/ha-tux.service"
+      # Locked-down service user for the host role.
+      - getent passwd {{.HOST_USER}} >/dev/null || sudo useradd --system --create-home --home-dir {{.HOST_HOME}} --shell /usr/sbin/nologin {{.HOST_USER}}
+      # Shared brew group so the service user can run brew update/upgrade against the prefix.
+      - getent group brew >/dev/null || sudo groupadd brew
+      - sudo usermod --append --groups brew "$(id -un)"
+      - sudo usermod --append --groups brew {{.HOST_USER}}
+      - sudo chgrp --recursive brew {{.BREW_PREFIX}}
+      - sudo chmod --recursive g+w {{.BREW_PREFIX}}
+      - sudo find {{.BREW_PREFIX}} -type d -exec chmod g+s {} +
+      # Seed the host user's config and state from the invoking user's (preserves gist ids).
+      - sudo install -d -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0750 {{.HOST_HOME}}/.config/ha-tux {{.HOST_HOME}}/.local/state/ha-tux
+      - if test -f "{{.HOME}}/.config/ha-tux/config.toml"; then sudo install -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0640 "{{.HOME}}/.config/ha-tux/config.toml" {{.HOST_HOME}}/.config/ha-tux/config.toml; fi
+      - if test -f "{{.HOME}}/.local/state/ha-tux/state.toml"; then sudo install -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0640 "{{.HOME}}/.local/state/ha-tux/state.toml" {{.HOST_HOME}}/.local/state/ha-tux/state.toml; fi
+      # Self-contained /opt venv: uv-managed 3.13 interpreter AND the venv both under /opt.
       - test -d {{.OPT_DIR}} || sudo install -d -o "$(id -un)" -g "$(id -gn)" {{.OPT_DIR}}
-      # System python is 3.14; the project needs 3.13. Install a uv-managed 3.13 *under /opt*
-      # (not the default ~/.local store) so the venv interpreter has no /home dependency that
-      # ProtectHome=tmpfs would hide.
       - UV_PYTHON_INSTALL_DIR={{.OPT_DIR}}/python uv python install 3.13
-      - UV_PYTHON_INSTALL_DIR={{.OPT_DIR}}/python UV_PROJECT_ENVIRONMENT={{.OPT_DIR}}/venv uv sync --no-dev --no-editable --frozen --python-preference only-managed --python 3.13
-      - sudo install -m 0644 "{{.SERVICE_SOURCE}}" "{{.SERVICE_TARGET}}"
+      - UV_PYTHON_INSTALL_DIR={{.OPT_DIR}}/python UV_PROJECT_ENVIRONMENT={{.OPT_DIR}}/venv uv sync --no-dev --no-editable --frozen --reinstall-package ha-tux --python-preference only-managed --python 3.13
+      # Install and start both units.
+      - sudo install -m 0644 "systemd/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}"
+      - sudo install -m 0644 "systemd/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}"
       - sudo systemctl daemon-reload
-      - sudo systemctl enable {{.SERVICE_NAME}}
-      - sudo systemctl restart {{.SERVICE_NAME}}
+      - sudo systemctl enable {{.SESSION_UNIT}} {{.HOST_UNIT}}
+      - sudo systemctl restart {{.SESSION_UNIT}} {{.HOST_UNIT}}
 
   uninstall:
-    desc: Stop and remove the system service
+    desc: Stop and remove both services
     cmds:
-      - sudo systemctl disable --now {{.SERVICE_NAME}} || true
-      - sudo rm -f "{{.SERVICE_TARGET}}"
+      - sudo systemctl disable --now {{.SESSION_UNIT}} {{.HOST_UNIT}} || true
+      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}"
       - sudo systemctl daemon-reload
 
   logs:
     desc: Display the service logs
     cmds:
-      - journalctl -o cat --no-pager -u ha-tux.service {{.CLI_ARGS}}
+      - journalctl -o cat --no-pager -u {{.SESSION_UNIT}} -u {{.HOST_UNIT}} {{.CLI_ARGS}}

@@ -10,8 +10,8 @@ LOGGER = logging.getLogger(__name__)
 class AsyncPoller:
     """Drives an async ``poll`` callable immediately, then on a fixed interval.
 
-    One failing iteration is logged and swallowed so the loop survives transient
-    errors; cancellation stops it cleanly."""
+    One failing iteration is logged and re-raised so the supervising session tears
+    down and reconnects; cancellation stops it cleanly."""
 
     def __init__(
         self,
@@ -34,4 +34,5 @@ class AsyncPoller:
                 LOGGER.exception(
                     "poller_iteration_failed", extra={"poller": self._name}
                 )
+                raise
             await asyncio.sleep(self._interval_seconds)

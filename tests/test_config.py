@@ -18,6 +18,7 @@ from ha_tux.config import (
     config_file_path,
     format_config_for_log,
     load_config,
+    parse_role,
     read_config_file,
     write_default_config_file,
 )
@@ -393,3 +394,16 @@ def test_software_update_poll_seconds_env_override(tmp_path: Path) -> None:
 
 def test_default_config_template_mentions_software_update() -> None:
     assert "[software_update]" in DEFAULT_CONFIG_FILE_TEXT
+
+
+def test_parse_role_defaults_to_all() -> None:
+    assert parse_role({}) == "all"
+
+
+def test_parse_role_reads_env() -> None:
+    assert parse_role({"HA_TUX_ROLE": "host"}) == "host"
+
+
+def test_parse_role_rejects_unknown() -> None:
+    with pytest.raises(ConfigError):
+        _ = parse_role({"HA_TUX_ROLE": "bogus"})

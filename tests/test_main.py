@@ -52,13 +52,21 @@ def test_build_mqtt_settings_uses_url_config() -> None:
         ),
     )
 
-    settings = build_mqtt_settings(config)
+    settings = build_mqtt_settings(config, "all")
 
     assert settings.url == "mqtt://user:pass@mqtt.local:1884"
     assert settings.username == "user"
     assert settings.password == "pass"
     assert settings.host == "mqtt.local"
     assert settings.port == 1884
+
+
+def test_build_mqtt_settings_suffixes_client_name_per_role() -> None:
+    config = HaTuxConfig(mqtt=MqttConfig(client_name="ha-tux"))
+
+    assert build_mqtt_settings(config, "session").client_name == "ha-tux-session"
+    assert build_mqtt_settings(config, "host").client_name == "ha-tux-host"
+    assert build_mqtt_settings(config, "all").client_name == "ha-tux"
 
 
 def test_module_help_emits_structured_log() -> None:

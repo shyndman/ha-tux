@@ -57,6 +57,22 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 
 ConfigSection = Literal["mqtt", "mpris", "zfs", "input_active", "software_update"]
 
+Role = Literal["session", "host", "all"]
+DEFAULT_ROLE: Final = "all"
+HA_TUX_ROLE_ENV: Final = "HA_TUX_ROLE"
+VALID_ROLES: Final = ("session", "host", "all")
+
+
+def parse_role(env: Mapping[str, str] = os.environ) -> Role:
+    raw = env.get(HA_TUX_ROLE_ENV)
+    if raw is None:
+        return DEFAULT_ROLE
+    if raw not in VALID_ROLES:
+        raise ConfigError(
+            f"{HA_TUX_ROLE_ENV} must be one of session, host, all (got {raw!r})"
+        )
+    return raw
+
 
 class ConfigError(ValueError):
     """Raised when file, environment, or CLI configuration is invalid."""

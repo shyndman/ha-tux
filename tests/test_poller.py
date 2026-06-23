@@ -29,28 +29,22 @@ def test_poller_runs_immediately_then_per_interval() -> None:
     assert calls >= 3
 
 
-def test_poller_survives_a_failing_iteration() -> None:
+def test_poller_reraises_failing_iteration() -> None:
     async def scenario() -> int:
         calls = 0
 
         async def poll() -> None:
             nonlocal calls
             calls += 1
-            if calls == 1:
-                raise RuntimeError("boom")
+            raise RuntimeError("boom")
 
         poller = AsyncPoller(name="test", interval_seconds=0.01, poll=poll)
-        task = asyncio.create_task(poller.run())
-        await asyncio.sleep(0.035)
-        _ = task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        with pytest.raises(RuntimeError, match="boom"):
+            await poller.run()
         return calls
 
     calls = asyncio.run(scenario())
-
-    # The loop continues past the first-iteration failure.
-    assert calls >= 2
+    assert calls == 1
 
 
 def test_poller_cancellation_stops_cleanly() -> None:
