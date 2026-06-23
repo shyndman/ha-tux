@@ -16,6 +16,7 @@ from ha_tux.idle_monitor import DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS
 from ha_tux.media_player_bridge import DEFAULT_POSITION_POLL_SECONDS
 from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
 from ha_tux.zfs import DEFAULT_ZFS_POLL_SECONDS
+from ha_tux.software_update.detect import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
 
 LOGGER_NAME: Final = "ha_tux"
 DEFAULT_MQTT_URL: Final = "mqtt://homeassistant:1883"
@@ -49,9 +50,12 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 
 #[input_active]
 #idle_timeout_seconds = 60.0
+
+#[software_update]
+#poll_seconds = 21600.0
 """
 
-ConfigSection = Literal["mqtt", "mpris", "zfs", "input_active"]
+ConfigSection = Literal["mqtt", "mpris", "zfs", "input_active", "software_update"]
 
 
 class ConfigError(ValueError):
@@ -109,6 +113,15 @@ class InputActiveConfig(BaseModel):
     )
 
 
+class SoftwareUpdateConfig(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    poll_seconds: float = Field(
+        default=DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS,
+        gt=0,
+    )
+
+
 class HaTuxConfig(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
@@ -116,6 +129,7 @@ class HaTuxConfig(BaseModel):
     mpris: MprisConfig = Field(default_factory=MprisConfig)
     zfs: ZfsConfig = Field(default_factory=ZfsConfig)
     input_active: InputActiveConfig = Field(default_factory=InputActiveConfig)
+    software_update: SoftwareUpdateConfig = Field(default_factory=SoftwareUpdateConfig)
 
 
 class EnvOverride(NamedTuple):
@@ -136,6 +150,11 @@ ENV_OVERRIDES: Final = (
         "HA_TUX_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS",
         "input_active",
         "idle_timeout_seconds",
+    ),
+    EnvOverride(
+        "HA_TUX_SOFTWARE_UPDATE_POLL_SECONDS",
+        "software_update",
+        "poll_seconds",
     ),
 )
 

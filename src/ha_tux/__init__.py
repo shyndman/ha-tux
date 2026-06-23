@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import socket
 from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -34,6 +35,8 @@ from ha_tux.media_player_bridge import (
     create_bridge,
 )
 from ha_tux.poller import AsyncPoller
+from ha_tux.run_state import StateStore, state_file_path
+from ha_tux.software_update.publisher import build_software_update_publisher
 from ha_tux.zfs import discover_pool_names
 
 STARTUP_EVENT = "application_started"
@@ -74,6 +77,8 @@ async def async_main(config: HaTuxConfig) -> None:
     device = build_host_device_info()
     entity = build_media_player_entity(device)
     pool_names = await discover_pool_names()
+    state_store = StateStore.load(state_file_path())
+    hostname = socket.gethostname()
 
     logger = get_logger(LOGGER_NAME)
     while True:
@@ -95,8 +100,20 @@ async def async_main(config: HaTuxConfig) -> None:
                 input_active_watcher = build_input_active_watcher(
                     input_active, config.input_active.idle_timeout_seconds
                 )
+                software_update = build_software_update_publisher(
+                    session, device, hostname, state_store
+                )
+                pollers = [poller]
+                if software_update is not None:
+                    pollers.append(
+                        AsyncPoller(
+                            name="software_update",
+                            interval_seconds=config.software_update.poll_seconds,
+                            poll=software_update.publish,
+                        )
+                    )
                 try:
-                    await run(bridge, poller, input_active_watcher, input_active)
+                    await run(bridge, pollers, input_active_watcher, input_active)
                 finally:
                     await bridge.stop()
         except asyncio.CancelledError:
@@ -128,19 +145,19 @@ def build_input_active_watcher(
 
 async def run(
     bridge: AsyncMprisMediaPlayerBridge,
-    poller: AsyncPoller,
+    pollers: Sequence[AsyncPoller],
     input_active_watcher: InputActiveWatcher,
     input_active: InputActivePublisher,
 ) -> None:
     await bridge.start()
-    poll_task = asyncio.create_task(poller.run())
+    poll_tasks = [asyncio.create_task(p.run()) for p in pollers]
     input_active_task = asyncio.create_task(
         run_input_active_forever(input_active_watcher, input_active)
     )
     try:
         await bridge.wait_until_stopped_or_failed()
     finally:
-        for task in (poll_task, input_active_task):
+        for task in (*poll_tasks, input_active_task):
             _ = task.cancel()
             with suppress(asyncio.CancelledError):
                 await task

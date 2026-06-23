@@ -362,3 +362,34 @@ def test_config_file_data_is_plain_mapping(tmp_path: Path) -> None:
     data: dict[str, object] = read_config_file(path)
 
     assert data == {"mqtt": {"url": "mqtt://mqtt.local:1883"}}
+
+
+def test_software_update_poll_seconds_from_toml(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    _ = path.write_text(
+        """
+[software_update]
+poll_seconds = 3600.0
+""".strip(),
+        encoding="utf-8",
+    )
+
+    app_config = load_config(path=path, env={})
+
+    assert app_config.software_update.poll_seconds == 3600.0
+
+
+def test_software_update_poll_seconds_env_override(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    _ = path.write_text("", encoding="utf-8")
+
+    app_config = load_config(
+        path=path,
+        env={"HA_TUX_SOFTWARE_UPDATE_POLL_SECONDS": "7200.0"},
+    )
+
+    assert app_config.software_update.poll_seconds == 7200.0
+
+
+def test_default_config_template_mentions_software_update() -> None:
+    assert "[software_update]" in DEFAULT_CONFIG_FILE_TEXT
