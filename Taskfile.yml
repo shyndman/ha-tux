@@ -29,6 +29,8 @@ tasks:
       - sudo chgrp --recursive brew {{.BREW_PREFIX}}
       - sudo chmod --recursive g+w {{.BREW_PREFIX}}
       - sudo find {{.BREW_PREFIX}} -type d -exec chmod g+s {} +
+      # compinit rejects group-writable completion dirs; drop g+w there (brew relink of zsh completions falls back to an interactive `brew upgrade` as the owner). ponytail: scoped to zsh, widen if bash/fish completions also warn.
+      - sudo chmod g-w {{.BREW_PREFIX}}/share/zsh {{.BREW_PREFIX}}/share/zsh/site-functions
       # Seed the host user's config and state from the invoking user's (preserves gist ids).
       - sudo install -d -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0750 {{.HOST_HOME}}/.config/ha-tux {{.HOST_HOME}}/.local/state/ha-tux
       - if test -f "{{.HOME}}/.config/ha-tux/config.toml"; then sudo install -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0640 "{{.HOME}}/.config/ha-tux/config.toml" {{.HOST_HOME}}/.config/ha-tux/config.toml; fi
