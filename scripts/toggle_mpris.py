@@ -1,4 +1,4 @@
-from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME, toggle_playback
+from ha_tux.media.mpris import PLAYERCTLD_SERVICE_NAME, toggle_playback
 
 
 def main() -> None:

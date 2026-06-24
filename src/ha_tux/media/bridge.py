@@ -12,12 +12,12 @@ from ha_mqtt_discoverable.media_player import (
     MediaPlayerInfo,
 )
 
-from ha_tux.album_art import AlbumArtPayload, AlbumArtResolver
-from ha_tux.ha_media import (
+from ha_tux.media.album_art import AlbumArtPayload, AlbumArtResolver
+from ha_tux.media.entity import (
     MediaPlayerPublisher,
     PlaceholderPublisher,
 )
-from ha_tux.mpris import (
+from ha_tux.media.mpris import (
     MPRIS_PLAYER_INTERFACE,
     PLAYERCTLD_SERVICE_NAME,
     DbusDaemonAsync,

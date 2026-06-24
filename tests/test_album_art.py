@@ -1,7 +1,7 @@
 from base64 import b64encode
 from pathlib import Path
 
-from ha_tux.album_art import AlbumArtResolver, detect_image_mime_type
+from ha_tux.media.album_art import AlbumArtResolver, detect_image_mime_type
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"payload"
 JPEG_BYTES = b"\xff\xd8\xffpayload"

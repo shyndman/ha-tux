@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pytest import MonkeyPatch
 
-import ha_tux.ha_media as ha_media_module
+import ha_tux.media.entity as ha_media_module
 from ha_mqtt_discoverable import DeviceInfo
-from ha_tux.ha_media import (
+from ha_tux.media.entity import (
     HA_TUX_MEDIA_DEVICE_CLASS,
     HA_TUX_MEDIA_NAME,
     HA_TUX_MEDIA_OBJECT_ID,

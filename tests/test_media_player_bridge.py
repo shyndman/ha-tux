@@ -10,9 +10,9 @@ import pytest
 from aiomqtt import Message
 from ha_mqtt_discoverable.media_player import MediaPlayer
 
-from ha_tux.album_art import AlbumArtResolver
-from ha_tux.media_player_bridge import AsyncMprisMediaPlayerBridge
-from ha_tux.mpris import (
+from ha_tux.media.album_art import AlbumArtResolver
+from ha_tux.media.bridge import AsyncMprisMediaPlayerBridge
+from ha_tux.media.mpris import (
     MICROSECONDS_PER_SECOND,
     DbusDaemonAsync,
     MprisPlayerAsync,
@@ -218,7 +218,7 @@ def test_snapshot_logs_album_art_payload_size(
         bridge, player, _media, _dbus = build_bridge()
         player.metadata.value["mpris:artUrl"] = ("s", art.as_uri())
 
-        caplog.set_level(logging.INFO, logger="ha_tux.media_player_bridge")
+        caplog.set_level(logging.INFO, logger="ha_tux.media.bridge")
 
         await bridge.publish_snapshot("manual")
 

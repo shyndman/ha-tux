@@ -13,8 +13,8 @@ from xdg_base_dirs import xdg_config_home
 
 from ha_tux.host_device import default_mqtt_client_name
 from ha_tux.idle_monitor import DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS
-from ha_tux.media_player_bridge import DEFAULT_POSITION_POLL_SECONDS
-from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
+from ha_tux.media.bridge import DEFAULT_POSITION_POLL_SECONDS
+from ha_tux.media.mpris import PLAYERCTLD_SERVICE_NAME
 from ha_tux.zfs import DEFAULT_ZFS_POLL_SECONDS
 from ha_tux.software_update.detect import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
 

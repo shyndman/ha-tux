@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from ha_tux.mpris import SupportedImageMimeType
+from ha_tux.media.mpris import SupportedImageMimeType
 
 LOGGER = logging.getLogger(__name__)
 

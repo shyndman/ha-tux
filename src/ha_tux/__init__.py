@@ -19,7 +19,7 @@ from ha_tux.config import (
     load_config,
     parse_role,
 )
-from ha_tux.ha_media import build_media_player_entity
+from ha_tux.media.entity import build_media_player_entity
 from ha_tux.ha_zfs import build_zfs_pool_publisher
 from ha_tux.host_device import build_host_device_info
 from ha_tux.ha_input_active import (
@@ -31,7 +31,7 @@ from ha_tux.idle_monitor import (
     InputActiveWatcher,
     new_idle_monitor_proxy,
 )
-from ha_tux.media_player_bridge import (
+from ha_tux.media.bridge import (
     DEFAULT_POSITION_POLL_SECONDS,
     AsyncMprisMediaPlayerBridge,
     create_bridge,

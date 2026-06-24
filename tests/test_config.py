@@ -22,7 +22,7 @@ from ha_tux.config import (
     read_config_file,
     write_default_config_file,
 )
-from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
+from ha_tux.media.mpris import PLAYERCTLD_SERVICE_NAME
 
 
 @pytest.fixture(autouse=True)

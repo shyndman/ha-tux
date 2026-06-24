@@ -9,7 +9,7 @@ from pytest import MonkeyPatch
 import ha_tux.config as config_module
 from ha_tux import DEFAULT_MQTT_URL, build_mqtt_settings
 from ha_tux.config import HaTuxConfig, MqttConfig, load_config
-from ha_tux.mpris import PLAYERCTLD_SERVICE_NAME
+from ha_tux.media.mpris import PLAYERCTLD_SERVICE_NAME
 
 SOURCE_PATH = Path(__file__).resolve().parents[1] / "src"
 
