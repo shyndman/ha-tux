@@ -10,7 +10,7 @@ from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable._session import SessionLike
 from ha_mqtt_discoverable.sensors import Sensor, SensorInfo
 
-from ha_tux.zfs import ZpoolStatus, read_zpool_statuses
+from ha_tux.zfs.zpool import ZpoolStatus, read_zpool_statuses
 
 LOGGER = logging.getLogger(__name__)
 

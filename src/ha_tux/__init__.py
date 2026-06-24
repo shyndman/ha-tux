@@ -20,7 +20,7 @@ from ha_tux.config import (
     parse_role,
 )
 from ha_tux.media.entity import build_media_player_entity
-from ha_tux.ha_zfs import build_zfs_pool_publisher
+from ha_tux.zfs.entity import build_zfs_pool_publisher
 from ha_tux.host_device import build_host_device_info
 from ha_tux.ha_input_active import (
     InputActivePublisher,
@@ -39,7 +39,7 @@ from ha_tux.media.bridge import (
 from ha_tux.poller import AsyncPoller
 from ha_tux.run_state import StateStore, state_file_path
 from ha_tux.software_update.publisher import build_software_update_publisher
-from ha_tux.zfs import discover_pool_names
+from ha_tux.zfs.zpool import discover_pool_names
 
 STARTUP_EVENT = "application_started"
 MQTT_RECONNECT_DELAY_SECONDS = 2.0

@@ -8,9 +8,9 @@ from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable._session import PublishPayload, SessionLike
 from pytest import MonkeyPatch
 
-import ha_tux.ha_zfs as ha_zfs
-from ha_tux.ha_zfs import build_zfs_pool_publisher
-from ha_tux.zfs import ZpoolStatus
+import ha_tux.zfs.entity as ha_zfs
+from ha_tux.zfs.entity import build_zfs_pool_publisher
+from ha_tux.zfs.zpool import ZpoolStatus
 
 DEVICE = DeviceInfo(name="ha-tux", identifiers="ha-tux-test")
 

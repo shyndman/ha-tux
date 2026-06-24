@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ha_tux.zfs import ZpoolStatus, parse_zpool_statuses
+from ha_tux.zfs.zpool import ZpoolStatus, parse_zpool_statuses
 
 
 def _property(value: str) -> dict[str, object]:
