@@ -1,0 +1,16 @@
+[Unit]
+Description=Apply Homebrew package upgrades for ha-tux
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=shyndman
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+# Bare `brew upgrade` loads every outdated formula, including ones from the user's own
+# untrusted taps (e.g. shyndman/local-dust); the tap-trust gate would abort the whole run.
+# ponytail: env-var escape hatch; switch to `brew trust <taps>` when brew removes this flag.
+Environment=HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+TimeoutStartSec=1800
+ExecStartPre=/home/linuxbrew/.linuxbrew/bin/brew update --quiet
+ExecStart=/home/linuxbrew/.linuxbrew/bin/brew upgrade

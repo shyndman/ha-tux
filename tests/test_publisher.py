@@ -198,7 +198,12 @@ def test_brew_install_marks_in_progress_then_resolves(
         report,
         manager="brew",
         label="homebrew",
-        install_cmd=("/usr/bin/brew", "upgrade"),
+        install_cmd=(
+            "/usr/bin/systemctl",
+            "start",
+            "--wait",
+            "ha-tux-brew-upgrade.service",
+        ),
     )
 
     captured: list[list[str]] = []
@@ -214,7 +219,9 @@ def test_brew_install_marks_in_progress_then_resolves(
     asyncio.run(mp.on_install(cast(Update, cast(object, stub)), message))
 
     assert stub.progress == []
-    assert captured == [["/usr/bin/brew", "upgrade"]]
+    assert captured == [
+        ["/usr/bin/systemctl", "start", "--wait", "ha-tux-brew-upgrade.service"]
+    ]
     assert len(stub.states) == 2
     assert stub.states[0]["in_progress"] is True
     assert stub.states[1]["title"] == "homebrew: Up to date"

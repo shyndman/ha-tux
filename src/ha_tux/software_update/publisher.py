@@ -15,6 +15,7 @@ from ha_tux.gist import publish_gist, publish_shortlink
 from ha_tux.run_state import StateStore
 from ha_tux.software_update.detect import (
     APT_UPGRADE_UNIT,
+    BREW_UPGRADE_UNIT,
     SENTINEL_DATE,
     SYSTEMCTL_PATH,
     UpdateReport,
@@ -194,7 +195,7 @@ def build_software_update_publisher(
                 hostname=hostname,
                 slug=f"{host_slug}-brew-updates",
                 description=f"ha-tux homebrew updates on {hostname}",
-                install_cmd=(brew, "upgrade"),
+                install_cmd=(SYSTEMCTL_PATH, "start", "--wait", BREW_UPGRADE_UNIT),
             )
         )
 
