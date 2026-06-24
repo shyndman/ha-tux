@@ -16,6 +16,7 @@ LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "APT_CHECK_PATH",
+    "APT_NEVER_PHASED_OPT",
     "APT_UPGRADE_UNIT",
     "BREW_UPGRADE_UNIT",
     "DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS",
@@ -31,6 +32,7 @@ __all__ = [
     "human_bytes",
     "parse_apt_check",
     "parse_apt_download_bytes",
+    "parse_apt_installable",
     "parse_apt_upgradable",
     "parse_brew_outdated",
     "query_apt",
@@ -50,12 +52,19 @@ APT_UPGRADE_UNIT: Final = "ha-tux-apt-upgrade.service"
 BREW_UPGRADE_UNIT: Final = "ha-tux-brew-upgrade.service"
 REBOOT_REQUIRED_PATH: Final = "/run/reboot-required"
 REBOOT_REQUIRED_PKGS_PATH: Final = "/run/reboot-required.pkgs"
+# The host service runs in a systemd sandbox (ProtectHome/PrivateTmp/namespaces)
+# where ischroot(1) returns true, so apt disables phased-update deferral and the
+# simulation lists phased packages that the unsandboxed root `apt-get upgrade`
+# (ha-tux-apt-upgrade.service) would NOT install. Forcing deferral keeps the
+# simulation's Inst lines in parity with what the Install button actually does.
+APT_NEVER_PHASED_OPT: Final = "APT::Get::Never-Include-Phased-Updates=true"
 
 _UPGRADABLE_RE: Final = re.compile(
     r"^(\S+?)/\S+\s+(\S+)\s+\S+\s+\[upgradable from:\s*(\S+)\]"
 )
 _APT_CHECK_RE: Final = re.compile(r"(\d+);(\d+)")
 _DOWNLOAD_RE: Final = re.compile(r"Need to get\s+([\d.,]+)\s*([kKMG]?B)")
+_APT_INST_RE: Final = re.compile(r"^Inst\s+(\S+)", re.MULTILINE)
 _SLUG_RE: Final = re.compile(r"[^a-z0-9]+")
 _UNIT_FACTORS: Final = {
     "B": 1,
@@ -137,6 +146,15 @@ def parse_apt_download_bytes(sim_stdout: str) -> int | None:
     return int(number * factor)
 
 
+def parse_apt_installable(sim_stdout: str) -> frozenset[str]:
+    """Package names ``apt-get upgrade`` will actually install (its ``Inst`` lines).
+
+    Excludes phased ("deferred due to phasing") and kept-back packages, which
+    appear in ``apt list --upgradable`` but are not upgraded by plain ``upgrade``.
+    """
+    return frozenset(_APT_INST_RE.findall(sim_stdout))
+
+
 def read_reboot_required() -> tuple[bool, str | None]:
     if not Path(REBOOT_REQUIRED_PATH).exists():
         return (False, None)
@@ -201,7 +219,12 @@ async def query_apt(apt_get: str) -> UpdateReport:
     if Path(APT_CHECK_PATH).exists():
         _, _, check_err = await _run([APT_CHECK_PATH], env=env)
         security = parse_apt_check(check_err)
-    _, sim_out, _ = await _run([apt_get, "-s", "upgrade"], env=env)
+    sim_rc, sim_out, _ = await _run(
+        [apt_get, "-s", "-o", APT_NEVER_PHASED_OPT, "upgrade"], env=env
+    )
+    if sim_rc == 0:
+        installable = parse_apt_installable(sim_out)
+        packages = tuple(pkg for pkg in packages if pkg.name in installable)
     reboot_required, reboot_pkg = read_reboot_required()
     return UpdateReport(
         manager="apt",

@@ -9,6 +9,7 @@ from ha_tux.software_update.detect import (
     entity_title,
     human_bytes,
     parse_apt_check,
+    parse_apt_installable,
     parse_apt_download_bytes,
     parse_apt_upgradable,
     parse_brew_outdated,
@@ -70,6 +71,34 @@ def test_parse_apt_download_bytes() -> None:
 
 def test_parse_apt_download_bytes_none_when_absent() -> None:
     assert parse_apt_download_bytes("0 upgraded, 0 newly installed") is None
+
+
+APT_SIM_ALL_HELD = """NOTE: This is only a simulation!
+Calculating upgrade...
+The following upgrades have been deferred due to phasing:
+  gir1.2-packagekitglib-1.0 gstreamer1.0-packagekit libpackagekit-glib2-18
+  packagekit
+The following packages have been kept back:
+  build-essential
+0 upgraded, 0 newly installed, 0 to remove and 5 not upgraded.
+"""
+
+APT_SIM_TWO_INST = """NOTE: This is only a simulation!
+Calculating upgrade...
+Inst libc6 [2.39-0ubuntu8.3] (2.39-0ubuntu8.4 Ubuntu:24.04/noble-updates [amd64])
+Inst base-files [13ubuntu10] (13ubuntu10.1 Ubuntu:24.04/noble-updates [amd64])
+The following packages have been kept back:
+  build-essential
+Need to get 1024 kB of archives.
+"""
+
+
+def test_parse_apt_installable_excludes_phased_and_kept_back() -> None:
+    assert parse_apt_installable(APT_SIM_ALL_HELD) == frozenset()
+
+
+def test_parse_apt_installable_returns_inst_names() -> None:
+    assert parse_apt_installable(APT_SIM_TWO_INST) == frozenset({"libc6", "base-files"})
 
 
 def test_parse_brew_outdated_excludes_pinned() -> None:
