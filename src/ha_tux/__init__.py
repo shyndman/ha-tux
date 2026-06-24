@@ -22,11 +22,11 @@ from ha_tux.config import (
 from ha_tux.media.entity import build_media_player_entity
 from ha_tux.zfs.entity import build_zfs_pool_publisher
 from ha_tux.host_device import build_host_device_info
-from ha_tux.ha_input_active import (
+from ha_tux.presence.entity import (
     InputActivePublisher,
     build_input_active_publisher,
 )
-from ha_tux.idle_monitor import (
+from ha_tux.presence.monitor import (
     MILLISECONDS_PER_SECOND,
     InputActiveWatcher,
     new_idle_monitor_proxy,

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from xdg_base_dirs import xdg_config_home
 
 from ha_tux.host_device import default_mqtt_client_name
-from ha_tux.idle_monitor import DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS
+from ha_tux.presence.monitor import DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS
 from ha_tux.media.bridge import DEFAULT_POSITION_POLL_SECONDS
 from ha_tux.media.mpris import PLAYERCTLD_SERVICE_NAME
 from ha_tux.zfs.zpool import DEFAULT_ZFS_POLL_SECONDS

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import cast
 
-from ha_tux.idle_monitor import InputActiveWatcher, MutterIdleMonitorAsync
+from ha_tux.presence.monitor import InputActiveWatcher, MutterIdleMonitorAsync
 
 TIMEOUT_MS = 60_000
 
