@@ -44,7 +44,7 @@ __all__ = [
     "version_pair",
 ]
 
-DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS: Final = 21600.0  # 6 hours
+DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS: Final = 172800.0  # 2 days
 SENTINEL_DATE: Final = "1970-01-01"
 APT_CHECK_PATH: Final = "/usr/lib/update-notifier/apt-check"
 SYSTEMCTL_PATH: Final = "/usr/bin/systemctl"
