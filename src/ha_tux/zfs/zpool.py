@@ -17,7 +17,7 @@ ZPOOL_LIST_COMMAND: Final = (
     "-o",
     "name,size,alloc,free,cap,frag,health",
 )
-DEFAULT_ZFS_POLL_SECONDS: Final = 60.0
+DEFAULT_ZFS_POLL_SECONDS: Final = 1800.0
 
 _UNKNOWN_HEALTH: Final = "UNKNOWN"
 

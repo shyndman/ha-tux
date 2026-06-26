@@ -46,7 +46,7 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 #position_poll_seconds = 1.0
 
 #[zfs]
-#poll_seconds = 60.0
+#poll_seconds = 1800.0
 
 #[input_active]
 #idle_timeout_seconds = 60.0
