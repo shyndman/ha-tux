@@ -17,6 +17,16 @@ ZPOOL_LIST_COMMAND: Final = (
     "-o",
     "name,size,alloc,free,cap,frag,health",
 )
+ZFS_SNAPSHOT_LIST_COMMAND: Final = (
+    "zfs",
+    "list",
+    "-t",
+    "snapshot",
+    "-H",
+    "-p",
+    "-o",
+    "name,creation",
+)
 DEFAULT_ZFS_POLL_SECONDS: Final = 1800.0
 
 _UNKNOWN_HEALTH: Final = "UNKNOWN"
@@ -78,6 +88,48 @@ async def read_zpool_statuses() -> tuple[ZpoolStatus, ...]:
     if not isinstance(payload, Mapping):
         raise ValueError("zpool list JSON output must be an object")
     return parse_zpool_statuses(cast(Mapping[str, object], payload))
+
+
+@dataclass(frozen=True, slots=True)
+class PoolSnapshots:
+    count: int
+    latest_epoch: int | None
+
+
+def parse_pool_snapshots(output: str) -> dict[str, PoolSnapshots]:
+    accumulated: dict[str, PoolSnapshots] = {}
+    for line in output.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 2:
+            continue
+        name, creation = fields
+        if not creation.isdigit():
+            continue
+        pool = name.split("@", 1)[0].split("/", 1)[0]
+        epoch = int(creation)
+        existing = accumulated.get(pool)
+        if existing is None:
+            accumulated[pool] = PoolSnapshots(count=1, latest_epoch=epoch)
+        else:
+            latest = existing.latest_epoch
+            accumulated[pool] = PoolSnapshots(
+                count=existing.count + 1,
+                latest_epoch=epoch if latest is None else max(latest, epoch),
+            )
+    return accumulated
+
+
+async def read_pool_snapshots() -> dict[str, PoolSnapshots]:
+    proc = await asyncio.create_subprocess_exec(
+        *ZFS_SNAPSHOT_LIST_COMMAND,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        message = stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"{' '.join(ZFS_SNAPSHOT_LIST_COMMAND)} failed: {message}")
+    return parse_pool_snapshots(stdout.decode(errors="replace"))
 
 
 async def discover_pool_names() -> tuple[str, ...]:

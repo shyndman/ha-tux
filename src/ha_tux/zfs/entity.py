@@ -4,13 +4,19 @@ import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Final
 
 from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable._session import SessionLike
 from ha_mqtt_discoverable.sensors import Sensor, SensorInfo
 
-from ha_tux.zfs.zpool import ZpoolStatus, read_zpool_statuses
+from ha_tux.zfs.zpool import (
+    PoolSnapshots,
+    ZpoolStatus,
+    read_pool_snapshots,
+    read_zpool_statuses,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +30,11 @@ MEASUREMENT_STATE_CLASS: Final = "measurement"
 
 HEALTH_KEY: Final = "health"
 HEALTH_LABEL: Final = "Health"
+SNAPSHOTS_KEY: Final = "snapshots"
+SNAPSHOTS_LABEL: Final = "Snapshots"
+LATEST_SNAPSHOT_KEY: Final = "latest_snapshot"
+LATEST_SNAPSHOT_LABEL: Final = "Latest snapshot"
+TIMESTAMP_DEVICE_CLASS: Final = "timestamp"
 
 _SLUG_PATTERN: Final = re.compile(r"[^a-z0-9_]+")
 
@@ -93,6 +104,8 @@ def pool_slug(pool_name: str) -> str:
 class _PoolSensors:
     health: Sensor
     metrics: tuple[tuple[ZfsMetric, Sensor], ...]
+    snapshot_count: Sensor
+    latest_snapshot: Sensor
 
 
 class ZfsPoolPublisher:
@@ -108,6 +121,12 @@ class ZfsPoolPublisher:
             return
 
         by_name = {status.name: status for status in statuses}
+        snapshots: dict[str, PoolSnapshots] | None
+        try:
+            snapshots = await read_pool_snapshots()
+        except Exception:
+            LOGGER.exception("zfs_snapshot_read_failed")
+            snapshots = None
         for pool_name, sensors in self._pools.items():
             status = by_name.get(pool_name)
             if status is None:
@@ -124,6 +143,23 @@ class ZfsPoolPublisher:
                     await sensor.set_available(True)
                     await sensor.set_state(value)
 
+            if snapshots is None:
+                await sensors.snapshot_count.set_available(False)
+                await sensors.latest_snapshot.set_available(False)
+                continue
+            pool_snaps = snapshots.get(pool_name)
+            count = pool_snaps.count if pool_snaps is not None else 0
+            await sensors.snapshot_count.set_available(True)
+            await sensors.snapshot_count.set_state(count)
+            if pool_snaps is not None and pool_snaps.latest_epoch is not None:
+                iso = datetime.fromtimestamp(
+                    pool_snaps.latest_epoch, tz=timezone.utc
+                ).isoformat()
+                await sensors.latest_snapshot.set_available(True)
+                await sensors.latest_snapshot.set_state(iso)
+            else:
+                await sensors.latest_snapshot.set_available(False)
+
     async def _set_all_unavailable(self) -> None:
         for sensors in self._pools.values():
             await self._set_pool_unavailable(sensors)
@@ -132,6 +168,8 @@ class ZfsPoolPublisher:
         await sensors.health.set_available(False)
         for _, sensor in sensors.metrics:
             await sensor.set_available(False)
+        await sensors.snapshot_count.set_available(False)
+        await sensors.latest_snapshot.set_available(False)
 
 
 def build_zfs_pool_publisher(
@@ -163,8 +201,26 @@ def build_zfs_pool_publisher(
                 suggested_unit_of_measurement=metric.suggested_unit,
             )
             metrics.append((metric, Sensor(session, info)))
+        snapshot_count_info = SensorInfo(
+            device=device,
+            unique_id=f"ha_tux_zfs_{slug}_{SNAPSHOTS_KEY}",
+            object_id=f"zfs_{slug}_{SNAPSHOTS_KEY}",
+            name=f"ZFS {pool_name} {SNAPSHOTS_LABEL}",
+            state_class=MEASUREMENT_STATE_CLASS,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        )
+        latest_snapshot_info = SensorInfo(
+            device=device,
+            unique_id=f"ha_tux_zfs_{slug}_{LATEST_SNAPSHOT_KEY}",
+            object_id=f"zfs_{slug}_{LATEST_SNAPSHOT_KEY}",
+            name=f"ZFS {pool_name} {LATEST_SNAPSHOT_LABEL}",
+            device_class=TIMESTAMP_DEVICE_CLASS,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        )
         pools[pool_name] = _PoolSensors(
             health=Sensor(session, health_info),
             metrics=tuple(metrics),
+            snapshot_count=Sensor(session, snapshot_count_info),
+            latest_snapshot=Sensor(session, latest_snapshot_info),
         )
     return ZfsPoolPublisher(pools=pools)

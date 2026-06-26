@@ -10,7 +10,7 @@ from pytest import MonkeyPatch
 
 import ha_tux.zfs.entity as ha_zfs
 from ha_tux.zfs.entity import build_zfs_pool_publisher
-from ha_tux.zfs.zpool import ZpoolStatus
+from ha_tux.zfs.zpool import PoolSnapshots, ZpoolStatus
 
 DEVICE = DeviceInfo(name="ha-tux", identifiers="ha-tux-test")
 
@@ -67,7 +67,7 @@ def _configs_by_unique_id(fake: FakeSession) -> dict[str, dict[str, object]]:
     return configs
 
 
-def test_builds_six_sensors_per_pool_with_expected_metadata(
+def test_builds_eight_sensors_per_pool_with_expected_metadata(
     monkeypatch: MonkeyPatch,
 ) -> None:
     fake, session = _session()
@@ -76,12 +76,17 @@ def test_builds_six_sensors_per_pool_with_expected_metadata(
         "read_zpool_statuses",
         lambda: _async_return((RPOOL_STATUS,)),
     )
+    monkeypatch.setattr(
+        ha_zfs,
+        "read_pool_snapshots",
+        lambda: _async_snapshots({}),
+    )
     publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
 
     asyncio.run(publisher.publish())
 
     configs = _configs_by_unique_id(fake)
-    assert len(configs) == 6
+    assert len(configs) == 8
 
     size = configs["ha_tux_zfs_rpool_size"]
     assert size["default_entity_id"] == "sensor.zfs_rpool_size"
@@ -112,6 +117,22 @@ def test_builds_six_sensors_per_pool_with_expected_metadata(
     assert "state_class" not in health
     assert health["entity_category"] == "diagnostic"
 
+    snapshots = configs["ha_tux_zfs_rpool_snapshots"]
+    assert snapshots["default_entity_id"] == "sensor.zfs_rpool_snapshots"
+    assert snapshots["name"] == "ZFS rpool Snapshots"
+    assert snapshots["state_class"] == "measurement"
+    assert "unit_of_measurement" not in snapshots
+    assert "device_class" not in snapshots
+    assert snapshots["entity_category"] == "diagnostic"
+
+    latest = configs["ha_tux_zfs_rpool_latest_snapshot"]
+    assert latest["default_entity_id"] == "sensor.zfs_rpool_latest_snapshot"
+    assert latest["name"] == "ZFS rpool Latest snapshot"
+    assert latest["device_class"] == "timestamp"
+    assert "state_class" not in latest
+    assert "unit_of_measurement" not in latest
+    assert latest["entity_category"] == "diagnostic"
+
 
 def test_publish_emits_state_for_each_metric_and_health(
     monkeypatch: MonkeyPatch,
@@ -121,6 +142,13 @@ def test_publish_emits_state_for_each_metric_and_health(
         ha_zfs,
         "read_zpool_statuses",
         lambda: _async_return((RPOOL_STATUS,)),
+    )
+    monkeypatch.setattr(
+        ha_zfs,
+        "read_pool_snapshots",
+        lambda: _async_snapshots(
+            {"rpool": PoolSnapshots(count=4, latest_epoch=1782471601)}
+        ),
     )
     publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
 
@@ -133,6 +161,8 @@ def test_publish_emits_state_for_each_metric_and_health(
     assert states["zfs_rpool_used"] == "3"
     assert states["zfs_rpool_fragmentation"] == "11"
     assert states["zfs_rpool_health"] == "ONLINE"
+    assert states["zfs_rpool_snapshots"] == "4"
+    assert states["zfs_rpool_latest_snapshot"] == "2026-06-26T11:00:01+00:00"
 
 
 def test_missing_pool_marks_all_its_sensors_offline(
@@ -140,12 +170,13 @@ def test_missing_pool_marks_all_its_sensors_offline(
 ) -> None:
     fake, session = _session()
     monkeypatch.setattr(ha_zfs, "read_zpool_statuses", lambda: _async_return(()))
+    monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
     publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
 
     asyncio.run(publisher.publish())
 
     availability = _availability(fake)
-    assert len(availability) == 6
+    assert len(availability) == 8
     assert set(availability.values()) == {"offline"}
     assert not _states(fake)
 
@@ -157,18 +188,20 @@ def test_read_failure_marks_all_sensors_offline(monkeypatch: MonkeyPatch) -> Non
         raise RuntimeError("zpool unavailable")
 
     monkeypatch.setattr(ha_zfs, "read_zpool_statuses", _raise)
+    monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
     publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
 
     asyncio.run(publisher.publish())
 
     availability = _availability(fake)
-    assert len(availability) == 6
+    assert len(availability) == 8
     assert set(availability.values()) == {"offline"}
 
 
 def test_empty_pool_names_publishes_nothing(monkeypatch: MonkeyPatch) -> None:
     fake, session = _session()
     monkeypatch.setattr(ha_zfs, "read_zpool_statuses", lambda: _async_return(()))
+    monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
     publisher = build_zfs_pool_publisher(session, DEVICE, [])
 
     asyncio.run(publisher.publish())
@@ -177,6 +210,12 @@ def test_empty_pool_names_publishes_nothing(monkeypatch: MonkeyPatch) -> None:
 
 
 async def _async_return(value: tuple[ZpoolStatus, ...]) -> tuple[ZpoolStatus, ...]:
+    return value
+
+
+async def _async_snapshots(
+    value: dict[str, PoolSnapshots],
+) -> dict[str, PoolSnapshots]:
     return value
 
 
@@ -194,3 +233,49 @@ def _availability(fake: FakeSession) -> dict[str, str]:
         if topic.endswith("/availability") and isinstance(payload, str):
             availability[topic.split("/")[-2]] = payload
     return availability
+
+
+def test_pool_with_no_snapshots_reports_zero_and_offline_timestamp(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake, session = _session()
+    monkeypatch.setattr(
+        ha_zfs,
+        "read_zpool_statuses",
+        lambda: _async_return((RPOOL_STATUS,)),
+    )
+    monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+
+    asyncio.run(publisher.publish())
+
+    states = _states(fake)
+    assert states["zfs_rpool_snapshots"] == "0"
+    assert "zfs_rpool_latest_snapshot" not in states
+    assert _availability(fake)["zfs_rpool_latest_snapshot"] == "offline"
+
+
+def test_snapshot_read_failure_keeps_other_sensors(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake, session = _session()
+    monkeypatch.setattr(
+        ha_zfs,
+        "read_zpool_statuses",
+        lambda: _async_return((RPOOL_STATUS,)),
+    )
+
+    def _raise() -> object:
+        raise RuntimeError("zfs unavailable")
+
+    monkeypatch.setattr(ha_zfs, "read_pool_snapshots", _raise)
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+
+    asyncio.run(publisher.publish())
+
+    states = _states(fake)
+    assert states["zfs_rpool_size"] == "500107862016"
+    assert states["zfs_rpool_health"] == "ONLINE"
+    availability = _availability(fake)
+    assert availability["zfs_rpool_snapshots"] == "offline"
+    assert availability["zfs_rpool_latest_snapshot"] == "offline"

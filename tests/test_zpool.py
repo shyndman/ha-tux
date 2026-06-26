@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from ha_tux.zfs.zpool import ZpoolStatus, parse_zpool_statuses
+from ha_tux.zfs.zpool import (
+    PoolSnapshots,
+    ZpoolStatus,
+    parse_pool_snapshots,
+    parse_zpool_statuses,
+)
 
 
 def _property(value: str) -> dict[str, object]:
@@ -132,3 +137,28 @@ def test_parse_falls_back_to_pool_state_when_health_missing() -> None:
 def test_parse_returns_empty_when_no_pools() -> None:
     assert parse_zpool_statuses({"pools": {}}) == ()
     assert parse_zpool_statuses({}) == ()
+
+
+def test_parse_pool_snapshots_groups_and_counts_by_pool() -> None:
+    output = "bpool/BOOT/x@a\t100\nbpool/BOOT/x@b\t300\nrpool/USERDATA/y@a\t200\n"
+    assert parse_pool_snapshots(output) == {
+        "bpool": PoolSnapshots(count=2, latest_epoch=300),
+        "rpool": PoolSnapshots(count=1, latest_epoch=200),
+    }
+
+
+def test_parse_pool_snapshots_groups_root_dataset_snapshot() -> None:
+    assert parse_pool_snapshots("pool@snap\t50\n") == {
+        "pool": PoolSnapshots(count=1, latest_epoch=50),
+    }
+
+
+def test_parse_pool_snapshots_empty() -> None:
+    assert parse_pool_snapshots("") == {}
+
+
+def test_parse_pool_snapshots_skips_bad_lines_without_dropping_pool() -> None:
+    output = "rpool/a@x\t100\nrpool/a@y\tnope\nrpool/a@z\t150\textra\nrpool/a@w\t200\n"
+    assert parse_pool_snapshots(output) == {
+        "rpool": PoolSnapshots(count=2, latest_epoch=200),
+    }
