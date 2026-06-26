@@ -2,7 +2,7 @@ import base64
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from ha_tux.media.mpris import SupportedImageMimeType
 
@@ -20,6 +20,27 @@ RIFF_SIGNATURE = b"RIFF"
 WEBP_SIGNATURE = b"WEBP"
 RIFF_WEBP_FORMAT_OFFSET = 8
 MIN_WEBP_SIGNATURE_BYTES = 12
+YOUTUBE_HOSTS = frozenset(
+    {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
+)
+YOUTUBE_SHORT_HOST = "youtu.be"
+# ponytail: hq720 may 404 on some videos; switch to hqdefault.jpg (always present) if it bites
+YOUTUBE_THUMBNAIL_TEMPLATE = "https://i.ytimg.com/vi/{video_id}/hq720.jpg"
+
+
+def youtube_thumbnail_url(page_url: str | None) -> str | None:
+    if not page_url:
+        return None
+    parsed = urlparse(page_url)
+    if parsed.hostname == YOUTUBE_SHORT_HOST:
+        video_id = parsed.path.lstrip("/")
+    elif parsed.hostname in YOUTUBE_HOSTS:
+        video_id = next(iter(parse_qs(parsed.query).get("v", [])), "")
+    else:
+        return None
+    if not video_id:
+        return None
+    return YOUTUBE_THUMBNAIL_TEMPLATE.format(video_id=video_id)
 
 
 @dataclass(frozen=True, slots=True)

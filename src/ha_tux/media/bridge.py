@@ -12,7 +12,11 @@ from ha_mqtt_discoverable.media_player import (
     MediaPlayerInfo,
 )
 
-from ha_tux.media.album_art import AlbumArtPayload, AlbumArtResolver
+from ha_tux.media.album_art import (
+    AlbumArtPayload,
+    AlbumArtResolver,
+    youtube_thumbnail_url,
+)
 from ha_tux.media.entity import (
     MediaPlayerPublisher,
     PlaceholderPublisher,
@@ -253,7 +257,9 @@ class AsyncMprisMediaPlayerBridge:
         metadata = cast(MetadataMap, await _await_property(self.player.metadata))
         position_us = cast(int, await _await_property(self.player.position))
         volume = cast(float, await _await_property(self.player.volume))
-        art_url = metadata_string(metadata, "mpris:artUrl")
+        art_url = metadata_string(metadata, "mpris:artUrl") or youtube_thumbnail_url(
+            metadata_string(metadata, "xesam:url")
+        )
         album_art = self.album_art_resolver.resolve(art_url)
         self._update_last_nonzero_volume(volume)
         return MediaSnapshot(
