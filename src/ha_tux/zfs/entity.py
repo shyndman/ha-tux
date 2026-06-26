@@ -176,14 +176,15 @@ def build_zfs_pool_publisher(
     session: SessionLike,
     device: DeviceInfo,
     pool_names: Sequence[str],
+    host_prefix: str,
 ) -> ZfsPoolPublisher:
     pools: dict[str, _PoolSensors] = {}
     for pool_name in pool_names:
         slug = pool_slug(pool_name)
         health_info = SensorInfo(
             device=device,
-            unique_id=f"ha_tux_zfs_{slug}_{HEALTH_KEY}",
-            object_id=f"zfs_{slug}_{HEALTH_KEY}",
+            unique_id=f"ha_tux_{host_prefix}_zfs_{slug}_{HEALTH_KEY}",
+            object_id=f"{host_prefix}_zfs_{slug}_{HEALTH_KEY}",
             name=f"ZFS {pool_name} {HEALTH_LABEL}",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         )
@@ -191,8 +192,8 @@ def build_zfs_pool_publisher(
         for metric in ZFS_NUMERIC_METRICS:
             info = ZfsSensorInfo(
                 device=device,
-                unique_id=f"ha_tux_zfs_{slug}_{metric.key}",
-                object_id=f"zfs_{slug}_{metric.key}",
+                unique_id=f"ha_tux_{host_prefix}_zfs_{slug}_{metric.key}",
+                object_id=f"{host_prefix}_zfs_{slug}_{metric.key}",
                 name=f"ZFS {pool_name} {metric.label}",
                 unit_of_measurement=metric.unit,
                 device_class=metric.device_class,
@@ -203,16 +204,16 @@ def build_zfs_pool_publisher(
             metrics.append((metric, Sensor(session, info)))
         snapshot_count_info = SensorInfo(
             device=device,
-            unique_id=f"ha_tux_zfs_{slug}_{SNAPSHOTS_KEY}",
-            object_id=f"zfs_{slug}_{SNAPSHOTS_KEY}",
+            unique_id=f"ha_tux_{host_prefix}_zfs_{slug}_{SNAPSHOTS_KEY}",
+            object_id=f"{host_prefix}_zfs_{slug}_{SNAPSHOTS_KEY}",
             name=f"ZFS {pool_name} {SNAPSHOTS_LABEL}",
             state_class=MEASUREMENT_STATE_CLASS,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         )
         latest_snapshot_info = SensorInfo(
             device=device,
-            unique_id=f"ha_tux_zfs_{slug}_{LATEST_SNAPSHOT_KEY}",
-            object_id=f"zfs_{slug}_{LATEST_SNAPSHOT_KEY}",
+            unique_id=f"ha_tux_{host_prefix}_zfs_{slug}_{LATEST_SNAPSHOT_KEY}",
+            object_id=f"{host_prefix}_zfs_{slug}_{LATEST_SNAPSHOT_KEY}",
             name=f"ZFS {pool_name} {LATEST_SNAPSHOT_LABEL}",
             device_class=TIMESTAMP_DEVICE_CLASS,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,

@@ -88,7 +88,7 @@ def test_build_publishes_occupancy_discovery() -> None:
     fake = FakeSession()
     session = cast(SessionLike, cast(object, fake))
 
-    publisher = build_input_active_publisher(session, DEVICE)
+    publisher = build_input_active_publisher(session, DEVICE, "testbox")
     asyncio.run(publisher.set_active(True))
 
     configs = {
@@ -98,7 +98,7 @@ def test_build_publishes_occupancy_discovery() -> None:
         for topic, payload, _ in fake.published
         if topic.endswith("/config") and isinstance(payload, str)
     }
-    config = configs["ha_tux_input_active"]
+    config = configs["ha_tux_testbox_input_active"]
     assert config["device_class"] == "occupancy"
     assert config["name"] == "Input Active"
-    assert config["default_entity_id"] == "binary_sensor.input_active"
+    assert config["default_entity_id"] == "binary_sensor.testbox_input_active"

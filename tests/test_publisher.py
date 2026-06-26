@@ -120,6 +120,7 @@ def _make(
         query=lambda: _areturn(report),
         state_store=store,
         hostname="host",
+        host_prefix="testbox",
         slug=f"host-{manager}-updates",
         description="desc",
         install_cmd=install_cmd,

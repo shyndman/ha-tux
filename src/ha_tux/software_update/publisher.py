@@ -12,6 +12,7 @@ from ha_mqtt_discoverable._session import SessionLike
 from ha_mqtt_discoverable.sensors import Update, UpdateInfo
 
 from ha_tux.gist import publish_gist, publish_shortlink
+from ha_tux.host_device import host_slug
 from ha_tux.run_state import StateStore
 from ha_tux.software_update.detect import (
     APT_UPGRADE_UNIT,
@@ -52,6 +53,7 @@ class ManagerPublisher:
         query: Callable[[], Awaitable[UpdateReport]],
         state_store: StateStore,
         hostname: str,
+        host_prefix: str,
         slug: str,
         description: str,
         install_cmd: Sequence[str] | None = None,
@@ -72,8 +74,8 @@ class ManagerPublisher:
 
         info = UpdateInfo(
             device=device,
-            unique_id=f"ha_tux_software_update_{manager}",
-            object_id=f"software_update_{manager}",
+            unique_id=f"ha_tux_{host_prefix}_software_update_{manager}",
+            object_id=f"{host_prefix}_software_update_{manager}",
             name=f"{label.capitalize()} updates",
         )
         # An install command means an Install button; read-only entities pass None.
@@ -162,7 +164,8 @@ def build_software_update_publisher(
     hostname: str,
     state_store: StateStore,
 ) -> SoftwareUpdatePublisher | None:
-    host_slug = slugify(hostname)
+    host_prefix = host_slug(hostname)
+    topic_host_slug = slugify(hostname)
     managers: list[ManagerPublisher] = []
 
     apt_get = shutil.which("apt-get")
@@ -176,7 +179,8 @@ def build_software_update_publisher(
                 query=lambda apt_get=apt_get: query_apt(apt_get),
                 state_store=state_store,
                 hostname=hostname,
-                slug=f"{host_slug}-apt-updates",
+                host_prefix=host_prefix,
+                slug=f"{topic_host_slug}-apt-updates",
                 description=f"ha-tux apt updates on {hostname}",
                 install_cmd=(SYSTEMCTL_PATH, "start", "--wait", APT_UPGRADE_UNIT),
             )
@@ -193,7 +197,8 @@ def build_software_update_publisher(
                 query=lambda brew=brew: query_brew(brew),
                 state_store=state_store,
                 hostname=hostname,
-                slug=f"{host_slug}-brew-updates",
+                host_prefix=host_prefix,
+                slug=f"{topic_host_slug}-brew-updates",
                 description=f"ha-tux homebrew updates on {hostname}",
                 install_cmd=(SYSTEMCTL_PATH, "start", "--wait", BREW_UPGRADE_UNIT),
             )

@@ -8,7 +8,6 @@ from ha_tux.media.entity import (
     HA_TUX_MEDIA_DEVICE_CLASS,
     HA_TUX_MEDIA_NAME,
     HA_TUX_MEDIA_OBJECT_ID,
-    HA_TUX_MEDIA_UNIQUE_ID,
     build_media_player_entity,
 )
 
@@ -16,11 +15,11 @@ from ha_tux.media.entity import (
 def test_media_player_entity_attaches_supplied_host_device() -> None:
     device = DeviceInfo(name="Linux Laptop", identifiers="ha-tux:machine-id")
 
-    entity = build_media_player_entity(device=device)
+    entity = build_media_player_entity(device=device, host_prefix="testbox")
 
     assert entity.name == HA_TUX_MEDIA_NAME
-    assert entity.object_id == HA_TUX_MEDIA_OBJECT_ID
-    assert entity.unique_id == HA_TUX_MEDIA_UNIQUE_ID
+    assert entity.object_id == f"testbox_{HA_TUX_MEDIA_OBJECT_ID}"
+    assert entity.unique_id == f"ha_tux_testbox_{HA_TUX_MEDIA_OBJECT_ID}"
     assert entity.device_class == HA_TUX_MEDIA_DEVICE_CLASS
     assert entity.device == device
 
@@ -32,6 +31,6 @@ def test_media_player_entity_builds_host_device_by_default(
 
     monkeypatch.setattr(ha_media_module, "build_host_device_info", lambda: device)
 
-    entity = build_media_player_entity()
+    entity = build_media_player_entity(host_prefix="testbox")
 
     assert entity.device == device

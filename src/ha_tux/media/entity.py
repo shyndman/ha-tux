@@ -6,7 +6,6 @@ from ha_mqtt_discoverable.media_player import MediaPlayerInfo
 from ha_tux.host_device import build_host_device_info
 
 HA_TUX_MEDIA_OBJECT_ID = "desktop_media"
-HA_TUX_MEDIA_UNIQUE_ID = "ha_tux_desktop_media"
 HA_TUX_MEDIA_NAME = "Desktop Media"
 HA_TUX_MEDIA_DEVICE_CLASS = "speaker"
 PUBLISHER_NOT_INITIALIZED = "Media player publisher was not initialized"
@@ -90,12 +89,14 @@ class PlaceholderPublisher:
         raise RuntimeError(PUBLISHER_NOT_INITIALIZED)
 
 
-def build_media_player_entity(device: DeviceInfo | None = None) -> MediaPlayerInfo:
+def build_media_player_entity(
+    device: DeviceInfo | None = None, *, host_prefix: str
+) -> MediaPlayerInfo:
     resolved_device = device if device is not None else build_host_device_info()
     return MediaPlayerInfo(
         name=HA_TUX_MEDIA_NAME,
-        object_id=HA_TUX_MEDIA_OBJECT_ID,
-        unique_id=HA_TUX_MEDIA_UNIQUE_ID,
+        object_id=f"{host_prefix}_{HA_TUX_MEDIA_OBJECT_ID}",
+        unique_id=f"ha_tux_{host_prefix}_{HA_TUX_MEDIA_OBJECT_ID}",
         device=resolved_device,
         device_class=HA_TUX_MEDIA_DEVICE_CLASS,
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import subprocess
 from collections.abc import Mapping
@@ -13,6 +14,12 @@ from libsh import get_logger
 LOGGER_NAME: Final = "ha_tux"
 HOSTNAMECTL_COMMAND: Final = ("hostnamectl", "--json=short")
 DEVICE_IDENTIFIER_DOMAIN: Final = "ha-tux"
+
+_HOST_SLUG_PATTERN: Final = re.compile(r"[^a-z0-9]+")
+
+
+def host_slug(hostname: str) -> str:
+    return _HOST_SLUG_PATTERN.sub("_", hostname.lower()).strip("_")
 
 
 @dataclass(frozen=True, slots=True)

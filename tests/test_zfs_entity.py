@@ -81,15 +81,15 @@ def test_builds_eight_sensors_per_pool_with_expected_metadata(
         "read_pool_snapshots",
         lambda: _async_snapshots({}),
     )
-    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"], "testbox")
 
     asyncio.run(publisher.publish())
 
     configs = _configs_by_unique_id(fake)
     assert len(configs) == 8
 
-    size = configs["ha_tux_zfs_rpool_size"]
-    assert size["default_entity_id"] == "sensor.zfs_rpool_size"
+    size = configs["ha_tux_testbox_zfs_rpool_size"]
+    assert size["default_entity_id"] == "sensor.testbox_zfs_rpool_size"
     assert size["name"] == "ZFS rpool Size"
     assert size["unit_of_measurement"] == "B"
     assert size["device_class"] == "data_size"
@@ -97,36 +97,39 @@ def test_builds_eight_sensors_per_pool_with_expected_metadata(
     assert size["entity_category"] == "diagnostic"
     assert size["suggested_unit_of_measurement"] == "TiB"
 
-    assert configs["ha_tux_zfs_rpool_allocated"]["suggested_unit_of_measurement"] == (
-        "GiB"
+    assert configs["ha_tux_testbox_zfs_rpool_allocated"][
+        "suggested_unit_of_measurement"
+    ] == ("GiB")
+    assert (
+        configs["ha_tux_testbox_zfs_rpool_free"]["suggested_unit_of_measurement"]
+        == "GiB"
     )
-    assert configs["ha_tux_zfs_rpool_free"]["suggested_unit_of_measurement"] == "GiB"
 
-    used = configs["ha_tux_zfs_rpool_used"]
-    assert used["default_entity_id"] == "sensor.zfs_rpool_used"
+    used = configs["ha_tux_testbox_zfs_rpool_used"]
+    assert used["default_entity_id"] == "sensor.testbox_zfs_rpool_used"
     assert used["name"] == "ZFS rpool Used"
     assert used["unit_of_measurement"] == "%"
     assert "device_class" not in used
     assert used["state_class"] == "measurement"
     assert "suggested_unit_of_measurement" not in used
 
-    health = configs["ha_tux_zfs_rpool_health"]
-    assert health["default_entity_id"] == "sensor.zfs_rpool_health"
+    health = configs["ha_tux_testbox_zfs_rpool_health"]
+    assert health["default_entity_id"] == "sensor.testbox_zfs_rpool_health"
     assert health["name"] == "ZFS rpool Health"
     assert "unit_of_measurement" not in health
     assert "state_class" not in health
     assert health["entity_category"] == "diagnostic"
 
-    snapshots = configs["ha_tux_zfs_rpool_snapshots"]
-    assert snapshots["default_entity_id"] == "sensor.zfs_rpool_snapshots"
+    snapshots = configs["ha_tux_testbox_zfs_rpool_snapshots"]
+    assert snapshots["default_entity_id"] == "sensor.testbox_zfs_rpool_snapshots"
     assert snapshots["name"] == "ZFS rpool Snapshots"
     assert snapshots["state_class"] == "measurement"
     assert "unit_of_measurement" not in snapshots
     assert "device_class" not in snapshots
     assert snapshots["entity_category"] == "diagnostic"
 
-    latest = configs["ha_tux_zfs_rpool_latest_snapshot"]
-    assert latest["default_entity_id"] == "sensor.zfs_rpool_latest_snapshot"
+    latest = configs["ha_tux_testbox_zfs_rpool_latest_snapshot"]
+    assert latest["default_entity_id"] == "sensor.testbox_zfs_rpool_latest_snapshot"
     assert latest["name"] == "ZFS rpool Latest snapshot"
     assert latest["device_class"] == "timestamp"
     assert "state_class" not in latest
@@ -150,19 +153,19 @@ def test_publish_emits_state_for_each_metric_and_health(
             {"rpool": PoolSnapshots(count=4, latest_epoch=1782471601)}
         ),
     )
-    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"], "testbox")
 
     asyncio.run(publisher.publish())
 
     states = _states(fake)
-    assert states["zfs_rpool_size"] == "500107862016"
-    assert states["zfs_rpool_allocated"] == "123456789"
-    assert states["zfs_rpool_free"] == "499984405227"
-    assert states["zfs_rpool_used"] == "3"
-    assert states["zfs_rpool_fragmentation"] == "11"
-    assert states["zfs_rpool_health"] == "ONLINE"
-    assert states["zfs_rpool_snapshots"] == "4"
-    assert states["zfs_rpool_latest_snapshot"] == "2026-06-26T11:00:01+00:00"
+    assert states["testbox_zfs_rpool_size"] == "500107862016"
+    assert states["testbox_zfs_rpool_allocated"] == "123456789"
+    assert states["testbox_zfs_rpool_free"] == "499984405227"
+    assert states["testbox_zfs_rpool_used"] == "3"
+    assert states["testbox_zfs_rpool_fragmentation"] == "11"
+    assert states["testbox_zfs_rpool_health"] == "ONLINE"
+    assert states["testbox_zfs_rpool_snapshots"] == "4"
+    assert states["testbox_zfs_rpool_latest_snapshot"] == "2026-06-26T11:00:01+00:00"
 
 
 def test_missing_pool_marks_all_its_sensors_offline(
@@ -171,7 +174,7 @@ def test_missing_pool_marks_all_its_sensors_offline(
     fake, session = _session()
     monkeypatch.setattr(ha_zfs, "read_zpool_statuses", lambda: _async_return(()))
     monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
-    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"], "testbox")
 
     asyncio.run(publisher.publish())
 
@@ -189,7 +192,7 @@ def test_read_failure_marks_all_sensors_offline(monkeypatch: MonkeyPatch) -> Non
 
     monkeypatch.setattr(ha_zfs, "read_zpool_statuses", _raise)
     monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
-    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"], "testbox")
 
     asyncio.run(publisher.publish())
 
@@ -202,7 +205,7 @@ def test_empty_pool_names_publishes_nothing(monkeypatch: MonkeyPatch) -> None:
     fake, session = _session()
     monkeypatch.setattr(ha_zfs, "read_zpool_statuses", lambda: _async_return(()))
     monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
-    publisher = build_zfs_pool_publisher(session, DEVICE, [])
+    publisher = build_zfs_pool_publisher(session, DEVICE, [], "testbox")
 
     asyncio.run(publisher.publish())
 
@@ -245,14 +248,14 @@ def test_pool_with_no_snapshots_reports_zero_and_offline_timestamp(
         lambda: _async_return((RPOOL_STATUS,)),
     )
     monkeypatch.setattr(ha_zfs, "read_pool_snapshots", lambda: _async_snapshots({}))
-    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"], "testbox")
 
     asyncio.run(publisher.publish())
 
     states = _states(fake)
-    assert states["zfs_rpool_snapshots"] == "0"
-    assert "zfs_rpool_latest_snapshot" not in states
-    assert _availability(fake)["zfs_rpool_latest_snapshot"] == "offline"
+    assert states["testbox_zfs_rpool_snapshots"] == "0"
+    assert "testbox_zfs_rpool_latest_snapshot" not in states
+    assert _availability(fake)["testbox_zfs_rpool_latest_snapshot"] == "offline"
 
 
 def test_snapshot_read_failure_keeps_other_sensors(
@@ -269,13 +272,13 @@ def test_snapshot_read_failure_keeps_other_sensors(
         raise RuntimeError("zfs unavailable")
 
     monkeypatch.setattr(ha_zfs, "read_pool_snapshots", _raise)
-    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"])
+    publisher = build_zfs_pool_publisher(session, DEVICE, ["rpool"], "testbox")
 
     asyncio.run(publisher.publish())
 
     states = _states(fake)
-    assert states["zfs_rpool_size"] == "500107862016"
-    assert states["zfs_rpool_health"] == "ONLINE"
+    assert states["testbox_zfs_rpool_size"] == "500107862016"
+    assert states["testbox_zfs_rpool_health"] == "ONLINE"
     availability = _availability(fake)
-    assert availability["zfs_rpool_snapshots"] == "offline"
-    assert availability["zfs_rpool_latest_snapshot"] == "offline"
+    assert availability["testbox_zfs_rpool_snapshots"] == "offline"
+    assert availability["testbox_zfs_rpool_latest_snapshot"] == "offline"

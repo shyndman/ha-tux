@@ -7,7 +7,6 @@ from ha_mqtt_discoverable._session import SessionLike
 from ha_mqtt_discoverable.sensors import BinarySensor, BinarySensorInfo
 
 INPUT_ACTIVE_OBJECT_ID: Final = "input_active"
-INPUT_ACTIVE_UNIQUE_ID: Final = "ha_tux_input_active"
 INPUT_ACTIVE_NAME: Final = "Input Active"
 INPUT_ACTIVE_DEVICE_CLASS: Final = "occupancy"
 
@@ -30,12 +29,12 @@ class InputActivePublisher:
 
 
 def build_input_active_publisher(
-    session: SessionLike, device: DeviceInfo
+    session: SessionLike, device: DeviceInfo, host_prefix: str
 ) -> InputActivePublisher:
     info = BinarySensorInfo(
         device=device,
-        unique_id=INPUT_ACTIVE_UNIQUE_ID,
-        object_id=INPUT_ACTIVE_OBJECT_ID,
+        unique_id=f"ha_tux_{host_prefix}_{INPUT_ACTIVE_OBJECT_ID}",
+        object_id=f"{host_prefix}_{INPUT_ACTIVE_OBJECT_ID}",
         name=INPUT_ACTIVE_NAME,
         device_class=INPUT_ACTIVE_DEVICE_CLASS,
     )

@@ -21,7 +21,7 @@ from ha_tux.config import (
 )
 from ha_tux.media.entity import build_media_player_entity
 from ha_tux.zfs.entity import build_zfs_pool_publisher
-from ha_tux.host_device import build_host_device_info
+from ha_tux.host_device import build_host_device_info, host_slug
 from ha_tux.presence.entity import (
     InputActivePublisher,
     build_input_active_publisher,
@@ -81,10 +81,15 @@ async def async_main(config: HaTuxConfig, role: Role) -> None:
     wants_session = role in ("session", "all")
     wants_host = role in ("host", "all")
 
-    entity = build_media_player_entity(device) if wants_session else None
+    hostname = socket.gethostname()
+    host_prefix = host_slug(hostname)
+    entity = (
+        build_media_player_entity(device, host_prefix=host_prefix)
+        if wants_session
+        else None
+    )
     pool_names = await discover_pool_names() if wants_host else ()
     state_store = StateStore.load(state_file_path()) if wants_host else None
-    hostname = socket.gethostname() if wants_host else ""
 
     logger = get_logger(LOGGER_NAME)
     while True:
@@ -101,12 +106,16 @@ async def async_main(config: HaTuxConfig, role: Role) -> None:
                         service_name=config.mpris.service,
                         position_poll_seconds=config.mpris.position_poll_seconds,
                     )
-                    input_active = build_input_active_publisher(session, device)
+                    input_active = build_input_active_publisher(
+                        session, device, host_prefix
+                    )
                     input_active_watcher = build_input_active_watcher(
                         input_active, config.input_active.idle_timeout_seconds
                     )
                 if state_store is not None:
-                    zfs = build_zfs_pool_publisher(session, device, pool_names)
+                    zfs = build_zfs_pool_publisher(
+                        session, device, pool_names, host_prefix
+                    )
                     pollers.append(
                         AsyncPoller(
                             name="zfs",
