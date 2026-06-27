@@ -1,12 +1,13 @@
 import argparse
 import asyncio
 import socket
-from collections.abc import Sequence
-from contextlib import suppress
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
-from ha_mqtt_discoverable import MqttSession, Settings
+from ha_mqtt_discoverable import DeviceInfo, MqttSession, Settings
 from libsh import get_logger, setup_logging_from_env
 
 from ha_tux.config import (
@@ -60,6 +61,117 @@ __all__ = [
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class Activation:
+    session: MqttSession
+    device: DeviceInfo
+    hostname: str
+    host_prefix: str
+    config: HaTuxConfig
+    tasks: asyncio.TaskGroup
+    cleanup: AsyncExitStack
+
+
+FeatureActivate = Callable[[Activation], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class Feature:
+    name: str
+    roles: frozenset[Role]
+    activate: FeatureActivate
+
+
+async def _activate_media(act: Activation) -> None:
+    entity = build_media_player_entity(act.device, host_prefix=act.host_prefix)
+    bridge: AsyncMprisMediaPlayerBridge = create_bridge(
+        act.session,
+        entity,
+        service_name=act.config.mpris.service,
+        position_poll_seconds=act.config.mpris.position_poll_seconds,
+    )
+    await bridge.start()
+    _ = act.cleanup.push_async_callback(bridge.stop)
+    _ = act.tasks.create_task(bridge.wait_until_stopped_or_failed())
+
+
+async def _activate_input_active(act: Activation) -> None:
+    publisher: InputActivePublisher = build_input_active_publisher(
+        act.session, act.device, act.host_prefix
+    )
+    watcher = InputActiveWatcher(
+        monitor=new_idle_monitor_proxy(),
+        idle_timeout_ms=int(
+            act.config.input_active.idle_timeout_seconds * MILLISECONDS_PER_SECOND
+        ),
+        on_change=publisher.set_active,
+    )
+    _ = act.tasks.create_task(run_input_active_forever(watcher, publisher))
+
+
+async def _activate_lock(act: Activation) -> None:
+    lock: LockPublisher = build_lock_publisher(act.session, act.device, act.host_prefix)
+    await lock.announce()
+
+
+async def _activate_zfs(act: Activation) -> None:
+    pool_names = await discover_pool_names()
+    publisher = build_zfs_pool_publisher(
+        act.session, act.device, pool_names, act.host_prefix
+    )
+    _ = act.tasks.create_task(
+        AsyncPoller(
+            name="zfs",
+            interval_seconds=act.config.zfs.poll_seconds,
+            poll=publisher.publish,
+        ).run()
+    )
+
+
+async def _activate_software_update(act: Activation) -> None:
+    state_store = StateStore.load(state_file_path())
+    publisher = build_software_update_publisher(
+        act.session, act.device, act.hostname, state_store
+    )
+    if publisher is None:
+        return
+    _ = act.tasks.create_task(
+        AsyncPoller(
+            name="software_update",
+            interval_seconds=act.config.software_update.poll_seconds,
+            poll=publisher.publish,
+        ).run()
+    )
+
+
+async def _activate_power(act: Activation) -> None:
+    publisher: PowerPublisher = build_power_publisher(
+        act.session, act.device, act.host_prefix
+    )
+    watcher = PowerWatcher(
+        device=new_display_device_proxy(),
+        on_change=publisher.update,
+    )
+    _ = act.tasks.create_task(run_power_forever(watcher, publisher))
+
+
+_SESSION_ROLES: frozenset[Role] = frozenset({"session", "all"})
+_HOST_ROLES: frozenset[Role] = frozenset({"host", "all"})
+
+FEATURES: tuple[Feature, ...] = (
+    Feature("media", _SESSION_ROLES, _activate_media),
+    Feature("input_active", _SESSION_ROLES, _activate_input_active),
+    Feature("lock", _SESSION_ROLES, _activate_lock),
+    Feature("zfs", _HOST_ROLES, _activate_zfs),
+    Feature("software_update", _HOST_ROLES, _activate_software_update),
+    Feature("power", _HOST_ROLES, _activate_power),
+)
+
+
+def features_for_role(role: Role) -> tuple[Feature, ...]:
+    return tuple(feature for feature in FEATURES if role in feature.roles)
+
+
 class CliArgs(Protocol):
     config: Path | None
 
@@ -82,82 +194,26 @@ def main(argv: Sequence[str] | None = None) -> None:
 async def async_main(config: HaTuxConfig, role: Role) -> None:
     mqtt_settings = build_mqtt_settings(config, role)
     device = build_host_device_info()
-    wants_session = role in ("session", "all")
-    wants_host = role in ("host", "all")
-
     hostname = socket.gethostname()
     host_prefix = host_slug(hostname)
-    entity = (
-        build_media_player_entity(device, host_prefix=host_prefix)
-        if wants_session
-        else None
-    )
-    pool_names = await discover_pool_names() if wants_host else ()
-    state_store = StateStore.load(state_file_path()) if wants_host else None
-
+    features = features_for_role(role)
     logger = get_logger(LOGGER_NAME)
     while True:
         try:
             async with MqttSession(mqtt_settings) as session:
-                bridge: AsyncMprisMediaPlayerBridge | None = None
-                input_active: InputActivePublisher | None = None
-                input_active_watcher: InputActiveWatcher | None = None
-                power: PowerPublisher | None = None
-                power_watcher: PowerWatcher | None = None
-                pollers: list[AsyncPoller] = []
-                if entity is not None:
-                    bridge = create_bridge(
-                        session,
-                        entity,
-                        service_name=config.mpris.service,
-                        position_poll_seconds=config.mpris.position_poll_seconds,
-                    )
-                    input_active = build_input_active_publisher(
-                        session, device, host_prefix
-                    )
-                    input_active_watcher = build_input_active_watcher(
-                        input_active, config.input_active.idle_timeout_seconds
-                    )
-                    lock: LockPublisher = build_lock_publisher(
-                        session, device, host_prefix
-                    )
-                    await lock.announce()
-                if state_store is not None:
-                    zfs = build_zfs_pool_publisher(
-                        session, device, pool_names, host_prefix
-                    )
-                    pollers.append(
-                        AsyncPoller(
-                            name="zfs",
-                            interval_seconds=config.zfs.poll_seconds,
-                            poll=zfs.publish,
+                async with AsyncExitStack() as cleanup:
+                    async with asyncio.TaskGroup() as tasks:
+                        act = Activation(
+                            session=session,
+                            device=device,
+                            hostname=hostname,
+                            host_prefix=host_prefix,
+                            config=config,
+                            tasks=tasks,
+                            cleanup=cleanup,
                         )
-                    )
-                    software_update = build_software_update_publisher(
-                        session, device, hostname, state_store
-                    )
-                    power = build_power_publisher(session, device, host_prefix)
-                    power_watcher = build_power_watcher(power)
-                    if software_update is not None:
-                        pollers.append(
-                            AsyncPoller(
-                                name="software_update",
-                                interval_seconds=config.software_update.poll_seconds,
-                                poll=software_update.publish,
-                            )
-                        )
-                try:
-                    await run(
-                        bridge=bridge,
-                        pollers=pollers,
-                        input_active_watcher=input_active_watcher,
-                        input_active=input_active,
-                        power_watcher=power_watcher,
-                        power=power,
-                    )
-                finally:
-                    if bridge is not None:
-                        await bridge.stop()
+                        for feature in features:
+                            await feature.activate(act)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -177,63 +233,6 @@ def build_mqtt_settings(config: HaTuxConfig, role: Role) -> Settings.MQTT:
         discovery_prefix=config.mqtt.discovery_prefix,
         state_prefix=config.mqtt.state_prefix,
     )
-
-
-def build_input_active_watcher(
-    publisher: InputActivePublisher,
-    idle_timeout_seconds: float,
-) -> InputActiveWatcher:
-    return InputActiveWatcher(
-        monitor=new_idle_monitor_proxy(),
-        idle_timeout_ms=int(idle_timeout_seconds * MILLISECONDS_PER_SECOND),
-        on_change=publisher.set_active,
-    )
-
-
-def build_power_watcher(publisher: PowerPublisher) -> PowerWatcher:
-    return PowerWatcher(
-        device=new_display_device_proxy(),
-        on_change=publisher.update,
-    )
-
-
-async def run(
-    *,
-    bridge: AsyncMprisMediaPlayerBridge | None,
-    pollers: Sequence[AsyncPoller],
-    input_active_watcher: InputActiveWatcher | None,
-    input_active: InputActivePublisher | None,
-    power_watcher: PowerWatcher | None,
-    power: PowerPublisher | None,
-) -> None:
-    if bridge is not None:
-        await bridge.start()
-    poll_tasks = [asyncio.create_task(p.run()) for p in pollers]
-    input_active_task: asyncio.Task[None] | None = None
-    if input_active_watcher is not None and input_active is not None:
-        input_active_task = asyncio.create_task(
-            run_input_active_forever(input_active_watcher, input_active)
-        )
-    power_task: asyncio.Task[None] | None = None
-    if power_watcher is not None and power is not None:
-        power_task = asyncio.create_task(run_power_forever(power_watcher, power))
-    bridge_task: asyncio.Task[None] | None = None
-    supervised: list[asyncio.Task[None]] = list(poll_tasks)
-    if bridge is not None:
-        bridge_task = asyncio.create_task(bridge.wait_until_stopped_or_failed())
-        supervised.append(bridge_task)
-    try:
-        done, _pending = await asyncio.wait(
-            supervised, return_when=asyncio.FIRST_COMPLETED
-        )
-        for task in done:
-            await task
-    finally:
-        for task in (*poll_tasks, input_active_task, power_task, bridge_task):
-            if task is not None:
-                _ = task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
 
 
 async def run_input_active_forever(
