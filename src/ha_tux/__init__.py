@@ -31,6 +31,7 @@ from ha_tux.presence.monitor import (
     InputActiveWatcher,
     new_idle_monitor_proxy,
 )
+from ha_tux.lock.entity import LockPublisher, build_lock_publisher
 from ha_tux.media.bridge import (
     DEFAULT_POSITION_POLL_SECONDS,
     AsyncMprisMediaPlayerBridge,
@@ -112,6 +113,10 @@ async def async_main(config: HaTuxConfig, role: Role) -> None:
                     input_active_watcher = build_input_active_watcher(
                         input_active, config.input_active.idle_timeout_seconds
                     )
+                    lock: LockPublisher = build_lock_publisher(
+                        session, device, host_prefix
+                    )
+                    await lock.announce()
                 if state_store is not None:
                     zfs = build_zfs_pool_publisher(
                         session, device, pool_names, host_prefix
