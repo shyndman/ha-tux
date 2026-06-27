@@ -11,8 +11,6 @@ from xdg_base_dirs import xdg_state_home
 STATE_DIRECTORY_NAME: Final = "ha-tux"
 STATE_FILE_NAME: Final = "state.toml"
 
-_FIELD_NAMES: Final = ("gist_id", "short_url", "last_clean_date")
-
 
 def state_file_path(state_home: Path | None = None) -> Path:
     base = state_home if state_home is not None else xdg_state_home()

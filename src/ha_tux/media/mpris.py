@@ -17,7 +17,6 @@ MPRIS_PLAYER_INTERFACE: Final = "org.mpris.MediaPlayer2.Player"
 MPRIS_NO_TRACK_PATH: Final = "/org/mpris/MediaPlayer2/TrackList/NoTrack"
 MICROSECONDS_PER_SECOND: Final = 1_000_000
 
-PlaybackStatus = Literal["Playing", "Paused", "Stopped"]
 MediaPlayerState = Literal["playing", "paused", "stopped", "idle", "off"]
 ToggleAction = Literal["Pause", "Play"]
 Variant = tuple[str, object]
@@ -149,23 +148,6 @@ class MprisPlayerAsync(
         raise NotImplementedError
 
 
-class MprisRootAsync(
-    DbusInterfaceCommonAsync,
-    interface_name="org.mpris.MediaPlayer2",
-):
-    @dbus_property_async("s", property_name="Identity")
-    def identity(self) -> str:
-        raise NotImplementedError
-
-    @dbus_property_async("as", property_name="SupportedUriSchemes")
-    def supported_uri_schemes(self) -> list[str]:
-        raise NotImplementedError
-
-    @dbus_property_async("as", property_name="SupportedMimeTypes")
-    def supported_mime_types(self) -> list[str]:
-        raise NotImplementedError
-
-
 class DbusDaemonAsync(
     DbusInterfaceCommonAsync,
     interface_name=DBUS_DAEMON_SERVICE_NAME,
@@ -184,10 +166,6 @@ def new_mpris_player_proxy(
     service_name: str = PLAYERCTLD_SERVICE_NAME,
 ) -> MprisPlayerAsync:
     return MprisPlayerAsync.new_proxy(service_name, MPRIS_OBJECT_PATH)
-
-
-def new_mpris_root_proxy(service_name: str = PLAYERCTLD_SERVICE_NAME) -> MprisRootAsync:
-    return MprisRootAsync.new_proxy(service_name, MPRIS_OBJECT_PATH)
 
 
 def new_dbus_daemon_proxy() -> DbusDaemonAsync:

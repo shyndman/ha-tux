@@ -27,7 +27,6 @@ from ha_tux.media.mpris import (
     DbusDaemonAsync,
     MetadataMap,
     MprisPlayerAsync,
-    MprisRootAsync,
     PropertiesChanged,
     artist_text_from_metadata,
     duration_seconds_from_metadata,
@@ -36,7 +35,6 @@ from ha_tux.media.mpris import (
     mpris_status_to_ha_state,
     new_dbus_daemon_proxy,
     new_mpris_player_proxy,
-    new_mpris_root_proxy,
     seconds_to_microseconds,
     track_id_from_metadata,
 )
@@ -71,7 +69,6 @@ class AsyncMprisMediaPlayerBridge:
         self,
         *,
         player: MprisPlayerAsync,
-        root: MprisRootAsync,
         dbus: DbusDaemonAsync,
         media_player: MediaPlayerPublisher,
         album_art_resolver: AlbumArtResolver,
@@ -79,7 +76,6 @@ class AsyncMprisMediaPlayerBridge:
         position_poll_seconds: float = DEFAULT_POSITION_POLL_SECONDS,
     ) -> None:
         self.player: MprisPlayerAsync = player
-        self.root: MprisRootAsync = root
         self.dbus: DbusDaemonAsync = dbus
         self.media_player: MediaPlayerPublisher = media_player
         self.album_art_resolver: AlbumArtResolver = album_art_resolver
@@ -359,7 +355,6 @@ class AsyncMprisMediaPlayerBridge:
             self._last_snapshot = None
             return
         self.player = new_mpris_player_proxy(self.service_name)
-        self.root = new_mpris_root_proxy(self.service_name)
         await self.publish_snapshot("name_owner_changed")
 
     def _schedule_command(self, awaitable: Coroutine[object, object, None]) -> None:
@@ -412,13 +407,11 @@ def create_bridge(
     position_poll_seconds: float = DEFAULT_POSITION_POLL_SECONDS,
 ) -> AsyncMprisMediaPlayerBridge:
     player = new_mpris_player_proxy(service_name)
-    root = new_mpris_root_proxy(service_name)
     dbus = new_dbus_daemon_proxy()
     resolver = AlbumArtResolver()
     placeholder = PlaceholderPublisher()
     bridge = AsyncMprisMediaPlayerBridge(
         player=player,
-        root=root,
         dbus=dbus,
         media_player=placeholder,
         album_art_resolver=resolver,

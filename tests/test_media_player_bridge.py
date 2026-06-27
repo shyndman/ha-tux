@@ -16,7 +16,6 @@ from ha_tux.media.mpris import (
     MICROSECONDS_PER_SECOND,
     DbusDaemonAsync,
     MprisPlayerAsync,
-    MprisRootAsync,
     PropertiesChanged,
 )
 
@@ -118,13 +117,6 @@ class FakePlayer:
 
 
 @dataclass
-class FakeRoot:
-    identity: AsyncProperty[str] = field(
-        default_factory=lambda: AsyncProperty("Chrome")
-    )
-
-
-@dataclass
 class FakeDbus:
     name_owner_changed: FakeSignal[tuple[str, str, str]] = field(
         default_factory=FakeSignal
@@ -180,7 +172,6 @@ def build_bridge() -> tuple[
     dbus = FakeDbus()
     bridge = AsyncMprisMediaPlayerBridge(
         player=cast(MprisPlayerAsync, cast(object, player)),
-        root=cast(MprisRootAsync, cast(object, FakeRoot())),
         dbus=cast(DbusDaemonAsync, cast(object, dbus)),
         media_player=media,
         album_art_resolver=AlbumArtResolver(),
