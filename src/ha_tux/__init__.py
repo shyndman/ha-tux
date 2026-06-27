@@ -32,6 +32,8 @@ from ha_tux.presence.monitor import (
     new_idle_monitor_proxy,
 )
 from ha_tux.lock.entity import LockPublisher, build_lock_publisher
+from ha_tux.power.entity import PowerPublisher, build_power_publisher
+from ha_tux.power.monitor import PowerWatcher, new_display_device_proxy
 from ha_tux.media.bridge import (
     DEFAULT_POSITION_POLL_SECONDS,
     AsyncMprisMediaPlayerBridge,
@@ -45,6 +47,7 @@ from ha_tux.zfs.zpool import discover_pool_names
 STARTUP_EVENT = "application_started"
 MQTT_RECONNECT_DELAY_SECONDS = 2.0
 INPUT_ACTIVE_RETRY_SECONDS = 5.0
+POWER_RETRY_SECONDS = 5.0
 
 __all__ = [
     "DEFAULT_MQTT_DISCOVERY_PREFIX",
@@ -99,6 +102,8 @@ async def async_main(config: HaTuxConfig, role: Role) -> None:
                 bridge: AsyncMprisMediaPlayerBridge | None = None
                 input_active: InputActivePublisher | None = None
                 input_active_watcher: InputActiveWatcher | None = None
+                power: PowerPublisher | None = None
+                power_watcher: PowerWatcher | None = None
                 pollers: list[AsyncPoller] = []
                 if entity is not None:
                     bridge = create_bridge(
@@ -131,6 +136,8 @@ async def async_main(config: HaTuxConfig, role: Role) -> None:
                     software_update = build_software_update_publisher(
                         session, device, hostname, state_store
                     )
+                    power = build_power_publisher(session, device, host_prefix)
+                    power_watcher = build_power_watcher(power)
                     if software_update is not None:
                         pollers.append(
                             AsyncPoller(
@@ -145,6 +152,8 @@ async def async_main(config: HaTuxConfig, role: Role) -> None:
                         pollers=pollers,
                         input_active_watcher=input_active_watcher,
                         input_active=input_active,
+                        power_watcher=power_watcher,
+                        power=power,
                     )
                 finally:
                     if bridge is not None:
@@ -181,12 +190,21 @@ def build_input_active_watcher(
     )
 
 
+def build_power_watcher(publisher: PowerPublisher) -> PowerWatcher:
+    return PowerWatcher(
+        device=new_display_device_proxy(),
+        on_change=publisher.update,
+    )
+
+
 async def run(
     *,
     bridge: AsyncMprisMediaPlayerBridge | None,
     pollers: Sequence[AsyncPoller],
     input_active_watcher: InputActiveWatcher | None,
     input_active: InputActivePublisher | None,
+    power_watcher: PowerWatcher | None,
+    power: PowerPublisher | None,
 ) -> None:
     if bridge is not None:
         await bridge.start()
@@ -196,6 +214,9 @@ async def run(
         input_active_task = asyncio.create_task(
             run_input_active_forever(input_active_watcher, input_active)
         )
+    power_task: asyncio.Task[None] | None = None
+    if power_watcher is not None and power is not None:
+        power_task = asyncio.create_task(run_power_forever(power_watcher, power))
     bridge_task: asyncio.Task[None] | None = None
     supervised: list[asyncio.Task[None]] = list(poll_tasks)
     if bridge is not None:
@@ -208,7 +229,7 @@ async def run(
         for task in done:
             await task
     finally:
-        for task in (*poll_tasks, input_active_task, bridge_task):
+        for task in (*poll_tasks, input_active_task, power_task, bridge_task):
             if task is not None:
                 _ = task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -230,3 +251,20 @@ async def run_input_active_forever(
             with suppress(Exception):
                 await publisher.set_available(False)
             await asyncio.sleep(INPUT_ACTIVE_RETRY_SECONDS)
+
+
+async def run_power_forever(
+    watcher: PowerWatcher,
+    publisher: PowerPublisher,
+) -> None:
+    logger = get_logger(LOGGER_NAME)
+    while True:
+        try:
+            await watcher.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("power_watch_failed")
+            with suppress(Exception):
+                await publisher.set_available(False)
+            await asyncio.sleep(POWER_RETRY_SECONDS)
