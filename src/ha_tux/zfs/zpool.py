@@ -4,9 +4,10 @@ import asyncio
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import ClassVar, Final, cast
 
 from libsh import get_logger
+from pydantic import BaseModel, ConfigDict
 
 LOGGER_NAME: Final = "ha_tux"
 ZPOOL_LIST_COMMAND: Final = (
@@ -43,33 +44,53 @@ class ZpoolStatus:
     health: str
 
 
-def parse_zpool_statuses(payload: Mapping[str, object]) -> tuple[ZpoolStatus, ...]:
-    pools = payload.get("pools")
-    if not isinstance(pools, Mapping):
-        return ()
+class _PropEntry(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
 
-    statuses: list[ZpoolStatus] = []
-    for raw_name, raw_pool in cast(Mapping[str, object], pools).items():
-        if not isinstance(raw_pool, Mapping):
-            continue
-        pool = cast(Mapping[str, object], raw_pool)
-        properties = pool.get("properties")
-        properties_map: Mapping[str, object] = (
-            cast(Mapping[str, object], properties)
-            if isinstance(properties, Mapping)
-            else {}
+    value: str | None = None
+
+
+class _Pool(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
+
+    state: str | None = None
+    properties: dict[str, _PropEntry] = {}
+
+    def optional_int(self, key: str) -> int | None:
+        entry = self.properties.get(key)
+        if entry is not None and entry.value is not None and entry.value.isdigit():
+            return int(entry.value)
+        return None
+
+    def health(self) -> str:
+        health = self.properties.get("health")
+        if health is not None and health.value:
+            return health.value
+        if self.state:
+            return self.state
+        return _UNKNOWN_HEALTH
+
+
+class _ZpoolPayload(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
+
+    pools: dict[str, _Pool] = {}
+
+
+def parse_zpool_statuses(payload: Mapping[str, object]) -> tuple[ZpoolStatus, ...]:
+    parsed = _ZpoolPayload.model_validate(payload)
+    statuses = [
+        ZpoolStatus(
+            name=name,
+            size_bytes=pool.optional_int("size"),
+            allocated_bytes=pool.optional_int("allocated"),
+            free_bytes=pool.optional_int("free"),
+            capacity_percent=pool.optional_int("capacity"),
+            fragmentation_percent=pool.optional_int("fragmentation"),
+            health=pool.health(),
         )
-        statuses.append(
-            ZpoolStatus(
-                name=raw_name,
-                size_bytes=_optional_int(properties_map, "size"),
-                allocated_bytes=_optional_int(properties_map, "allocated"),
-                free_bytes=_optional_int(properties_map, "free"),
-                capacity_percent=_optional_int(properties_map, "capacity"),
-                fragmentation_percent=_optional_int(properties_map, "fragmentation"),
-                health=_health(properties_map, pool),
-            )
-        )
+        for name, pool in parsed.pools.items()
+    ]
     return tuple(sorted(statuses, key=lambda status: status.name))
 
 
@@ -139,25 +160,3 @@ async def discover_pool_names() -> tuple[str, ...]:
         get_logger(LOGGER_NAME).info("zfs_pool_discovery_failed", error=str(error))
         return ()
     return tuple(status.name for status in statuses)
-
-
-def _optional_int(properties: Mapping[str, object], key: str) -> int | None:
-    entry = properties.get(key)
-    if not isinstance(entry, Mapping):
-        return None
-    value = cast(Mapping[str, object], entry).get("value")
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
-    return None
-
-
-def _health(properties: Mapping[str, object], pool: Mapping[str, object]) -> str:
-    entry = properties.get("health")
-    if isinstance(entry, Mapping):
-        value = cast(Mapping[str, object], entry).get("value")
-        if isinstance(value, str) and value:
-            return value
-    state = pool.get("state")
-    if isinstance(state, str) and state:
-        return state
-    return _UNKNOWN_HEALTH

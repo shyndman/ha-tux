@@ -10,7 +10,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Final, cast
+from typing import ClassVar, Final, cast
+
+from pydantic import BaseModel, ConfigDict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -168,17 +170,27 @@ def read_reboot_required() -> tuple[bool, str | None]:
     return (True, pkg)
 
 
-def _brew_package(entry: Mapping[str, object], pinned: bool) -> PackageUpdate:
-    installed_raw = entry.get("installed_versions")
-    installed = (
-        ", ".join(str(v) for v in cast(list[object], installed_raw))
-        if isinstance(installed_raw, list)
-        else ""
-    )
+class _BrewEntry(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
+
+    name: str = ""
+    installed_versions: list[str] = []
+    current_version: str = ""
+    pinned: bool = False
+
+
+class _BrewOutdated(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
+
+    formulae: list[_BrewEntry] = []
+    casks: list[_BrewEntry] = []
+
+
+def _brew_package(entry: _BrewEntry, pinned: bool) -> PackageUpdate:
     return PackageUpdate(
-        name=str(entry.get("name", "")),
-        installed=installed,
-        available=str(entry.get("current_version", "")),
+        name=entry.name,
+        installed=", ".join(entry.installed_versions),
+        available=entry.current_version,
         pinned=pinned,
     )
 
@@ -186,26 +198,15 @@ def _brew_package(entry: Mapping[str, object], pinned: bool) -> PackageUpdate:
 def parse_brew_outdated(
     payload: Mapping[str, object],
 ) -> tuple[tuple[PackageUpdate, ...], int, int]:
+    data = _BrewOutdated.model_validate(payload)
     packages: list[PackageUpdate] = []
     pinned_count = 0
-    formulae = payload.get("formulae")
-    if isinstance(formulae, list):
-        for raw in cast(list[object], formulae):
-            if not isinstance(raw, Mapping):
-                continue
-            entry = cast(Mapping[str, object], raw)
-            pinned = bool(entry.get("pinned", False))
-            pinned_count += int(pinned)
-            packages.append(_brew_package(entry, pinned))
-    casks_count = 0
-    casks = payload.get("casks")
-    if isinstance(casks, list):
-        for raw in cast(list[object], casks):
-            if not isinstance(raw, Mapping):
-                continue
-            casks_count += 1
-            packages.append(_brew_package(cast(Mapping[str, object], raw), False))
-    return tuple(packages), casks_count, pinned_count
+    for entry in data.formulae:
+        pinned_count += int(entry.pinned)
+        packages.append(_brew_package(entry, entry.pinned))
+    for entry in data.casks:
+        packages.append(_brew_package(entry, False))
+    return tuple(packages), len(data.casks), pinned_count
 
 
 async def query_apt(apt_get: str) -> UpdateReport:
