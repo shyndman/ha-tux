@@ -14,6 +14,7 @@ def test_host_role_activates_host_features() -> None:
         "zfs",
         "software_update",
         "power",
+        "smart",
     }
 
 
@@ -25,4 +26,5 @@ def test_all_role_activates_every_feature() -> None:
         "zfs",
         "software_update",
         "power",
+        "smart",
     }

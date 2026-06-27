@@ -14,6 +14,8 @@ vars:
   POLKIT_RULES_DIR: /etc/polkit-1/rules.d
   POLKIT_RULE: 49-ha-tux-apt-upgrade.rules
   BREW_POLKIT_RULE: 49-ha-tux-brew-upgrade.rules
+  SMART_SCAN_UNIT: ha-tux-smart.service
+  SMART_TIMER_UNIT: ha-tux-smart.timer
 
 tasks:
   install:
@@ -51,7 +53,11 @@ tasks:
       - sudo install -m 0644 "systemd/{{.BREW_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.BREW_UPGRADE_UNIT}}"
       - sudo install -m 0644 "polkit/{{.POLKIT_RULE}}" "{{.POLKIT_RULES_DIR}}/{{.POLKIT_RULE}}"
       - sudo install -m 0644 "polkit/{{.BREW_POLKIT_RULE}}" "{{.POLKIT_RULES_DIR}}/{{.BREW_POLKIT_RULE}}"
+      - sudo install -m 0644 "systemd/{{.SMART_SCAN_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_SCAN_UNIT}}"
+      - sudo install -m 0644 "systemd/{{.SMART_TIMER_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_TIMER_UNIT}}"
       - sudo systemctl daemon-reload
+      - sudo systemctl enable --now {{.SMART_TIMER_UNIT}}
+      - sudo systemctl start {{.SMART_SCAN_UNIT}}
       - sudo systemctl enable {{.SESSION_UNIT}} {{.HOST_UNIT}}
       - sudo systemctl restart {{.SESSION_UNIT}} {{.HOST_UNIT}}
 
@@ -59,7 +65,8 @@ tasks:
     desc: Stop and remove both services
     cmds:
       - sudo systemctl disable --now {{.SESSION_UNIT}} {{.HOST_UNIT}} || true
-      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.APT_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.BREW_UPGRADE_UNIT}}"
+      - sudo systemctl disable --now {{.SMART_TIMER_UNIT}} || true
+      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.APT_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.BREW_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_SCAN_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_TIMER_UNIT}}"
       - sudo rm -f "{{.POLKIT_RULES_DIR}}/{{.POLKIT_RULE}}" "{{.POLKIT_RULES_DIR}}/{{.BREW_POLKIT_RULE}}"
       - sudo systemctl daemon-reload
 

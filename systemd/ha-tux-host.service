@@ -2,6 +2,8 @@
 Description=Publish host ZFS and package-update state to Home Assistant
 After=network-online.target
 Wants=network-online.target
+Wants=ha-tux-smart.service
+After=ha-tux-smart.service
 
 [Service]
 Type=exec

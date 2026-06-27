@@ -16,6 +16,7 @@ from ha_tux.presence.monitor import DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS
 from ha_tux.media.bridge import DEFAULT_POSITION_POLL_SECONDS
 from ha_tux.media.mpris import PLAYERCTLD_SERVICE_NAME
 from ha_tux.zfs.zpool import DEFAULT_ZFS_POLL_SECONDS
+from ha_tux.smart.report import DEFAULT_SMART_POLL_SECONDS
 from ha_tux.software_update.detect import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
 
 LOGGER_NAME: Final = "ha_tux"
@@ -53,9 +54,14 @@ DEFAULT_CONFIG_FILE_TEXT: Final = """# ha-tux configuration
 
 #[software_update]
 #poll_seconds = 21600.0
+
+#[smart]
+#poll_seconds = 86400.0
 """
 
-ConfigSection = Literal["mqtt", "mpris", "zfs", "input_active", "software_update"]
+ConfigSection = Literal[
+    "mqtt", "mpris", "zfs", "input_active", "software_update", "smart"
+]
 
 Role = Literal["session", "host", "all"]
 DEFAULT_ROLE: Final = "all"
@@ -138,6 +144,15 @@ class SoftwareUpdateConfig(BaseModel):
     )
 
 
+class SmartConfig(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    poll_seconds: float = Field(
+        default=DEFAULT_SMART_POLL_SECONDS,
+        gt=0,
+    )
+
+
 class HaTuxConfig(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
@@ -146,6 +161,7 @@ class HaTuxConfig(BaseModel):
     zfs: ZfsConfig = Field(default_factory=ZfsConfig)
     input_active: InputActiveConfig = Field(default_factory=InputActiveConfig)
     software_update: SoftwareUpdateConfig = Field(default_factory=SoftwareUpdateConfig)
+    smart: SmartConfig = Field(default_factory=SmartConfig)
 
 
 class EnvOverride(NamedTuple):
@@ -172,6 +188,7 @@ ENV_OVERRIDES: Final = (
         "software_update",
         "poll_seconds",
     ),
+    EnvOverride("HA_TUX_SMART_POLL_SECONDS", "smart", "poll_seconds"),
 )
 
 

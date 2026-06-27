@@ -43,6 +43,8 @@ from ha_tux.media.bridge import (
 from ha_tux.poller import AsyncPoller
 from ha_tux.run_state import StateStore, state_file_path
 from ha_tux.software_update.publisher import build_software_update_publisher
+from ha_tux.smart.entity import build_smart_publisher
+from ha_tux.smart.report import SMART_REPORT_PATH
 from ha_tux.zfs.zpool import discover_pool_names
 
 STARTUP_EVENT = "application_started"
@@ -155,6 +157,22 @@ async def _activate_power(act: Activation) -> None:
     _ = act.tasks.create_task(run_power_forever(watcher, publisher))
 
 
+async def _activate_smart(act: Activation) -> None:
+    host_identifier = act.device.identifiers
+    if not isinstance(host_identifier, str):
+        return
+    publisher = build_smart_publisher(
+        act.session, act.device, host_identifier, act.host_prefix, SMART_REPORT_PATH
+    )
+    _ = act.tasks.create_task(
+        AsyncPoller(
+            name="smart",
+            interval_seconds=act.config.smart.poll_seconds,
+            poll=publisher.publish,
+        ).run()
+    )
+
+
 _SESSION_ROLES: frozenset[Role] = frozenset({"session", "all"})
 _HOST_ROLES: frozenset[Role] = frozenset({"host", "all"})
 
@@ -165,6 +183,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature("zfs", _HOST_ROLES, _activate_zfs),
     Feature("software_update", _HOST_ROLES, _activate_software_update),
     Feature("power", _HOST_ROLES, _activate_power),
+    Feature("smart", _HOST_ROLES, _activate_smart),
 )
 
 
