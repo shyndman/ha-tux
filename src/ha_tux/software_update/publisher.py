@@ -21,13 +21,13 @@ from ha_tux.software_update.detect import (
     SYSTEMCTL_PATH,
     UpdateReport,
     _run,
+    decide_surface,
     entity_title,
     gist_body,
     query_apt,
     query_brew,
     release_summary,
     slugify,
-    version_pair,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -99,12 +99,24 @@ class ManagerPublisher:
         today = date.today()
         refresh = today.isoformat()
         st = self.state_store.get(self.manager)
-        last_clean = _parse_date(st.last_clean_date)
-        installed, latest = version_pair(report.count, last_clean, today)
-        self._installed, self._latest = installed, latest
-
-        if report.count == 0:
-            self.state_store.update(self.manager, last_clean_date=refresh)
+        current = frozenset(p.name for p in report.packages if not p.pinned)
+        decision = decide_surface(
+            current=current,
+            previous=frozenset(st.pending_set),
+            notify_anchor=_parse_date(st.notify_anchor),
+            last_install_date=_parse_date(st.last_install_date),
+            today=today,
+        )
+        self._installed, self._latest = decision.installed, decision.latest
+        st.notify_anchor = (
+            decision.notify_anchor.isoformat() if decision.notify_anchor else None
+        )
+        st.last_install_date = (
+            decision.last_install_date.isoformat()
+            if decision.last_install_date
+            else None
+        )
+        st.pending_set = sorted(decision.pending)
 
         body = gist_body(report, self.hostname, refresh)
         gist_url = await publish_gist(self.manager, body, self.description, st)
@@ -123,10 +135,10 @@ class ManagerPublisher:
 
         await self.entity.set_available(True)
         await self.entity.set_state(
-            installed=installed,
-            latest=latest,
-            title=entity_title(self.label, report.count),
-            release_summary=release_summary(report),
+            installed=decision.installed,
+            latest=decision.latest,
+            title=entity_title(self.label, report.count if decision.surfaced else 0),
+            release_summary=release_summary(report) if decision.surfaced else None,
             release_url=short,
         )
 

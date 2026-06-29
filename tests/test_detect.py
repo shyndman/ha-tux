@@ -5,7 +5,9 @@ from datetime import date
 from ha_tux.software_update.detect import (
     SENTINEL_DATE,
     PackageUpdate,
+    SurfaceDecision,
     UpdateReport,
+    decide_surface,
     entity_title,
     human_bytes,
     parse_apt_check,
@@ -15,7 +17,6 @@ from ha_tux.software_update.detect import (
     parse_brew_outdated,
     release_summary,
     status_word,
-    version_pair,
 )
 
 APT_UPGRADABLE = """Listing... Done
@@ -165,18 +166,100 @@ def test_release_summary_brew_pending() -> None:
     assert release_summary(report) == "2 Updates  \n1 Cask · 3 Pinned"
 
 
-def test_version_pair_clean_equal() -> None:
+def test_decide_surface_clean() -> None:
     today = date(2026, 6, 23)
-    assert version_pair(0, None, today) == ("2026-06-23", "2026-06-23")
+    d = decide_surface(
+        current=frozenset(),
+        previous=frozenset(),
+        notify_anchor=None,
+        last_install_date=None,
+        today=today,
+    )
+    assert d.installed == today.isoformat()
+    assert d.latest == today.isoformat()
+    assert d.surfaced is False
 
 
-def test_version_pair_pending_with_old_clean_date() -> None:
+def test_decide_surface_first_surface() -> None:
     today = date(2026, 6, 23)
-    last_clean = date(2026, 6, 20)
-    assert version_pair(1, last_clean, today) == ("2026-06-20", "2026-06-23")
+    d = decide_surface(
+        current=frozenset({"a"}),
+        previous=frozenset(),
+        notify_anchor=None,
+        last_install_date=None,
+        today=today,
+    )
+    assert d.installed == SENTINEL_DATE
+    assert d.latest == today.isoformat()
+    assert d.surfaced is True
+    assert d.notify_anchor == today
 
 
-def test_version_pair_pending_same_day_or_none_uses_sentinel() -> None:
-    today = date(2026, 6, 23)
-    assert version_pair(1, None, today) == (SENTINEL_DATE, "2026-06-23")
-    assert version_pair(1, today, today) == (SENTINEL_DATE, "2026-06-23")
+def test_decide_surface_freezes_latest_across_days() -> None:
+    d = decide_surface(
+        current=frozenset({"a", "b"}),
+        previous=frozenset({"a", "b"}),
+        notify_anchor=date(2026, 6, 20),
+        last_install_date=None,
+        today=date(2026, 6, 25),
+    )
+    assert d.latest == "2026-06-20"
+    assert d.surfaced is True
+
+
+def test_decide_surface_reduction_arms_cooldown() -> None:
+    today = date(2026, 6, 25)
+    d = decide_surface(
+        current=frozenset({"b"}),
+        previous=frozenset({"a", "b"}),
+        notify_anchor=date(2026, 6, 20),
+        last_install_date=None,
+        today=today,
+    )
+    assert d.surfaced is False
+    assert d.last_install_date == today
+    assert d.notify_anchor is None
+    assert d.installed == today.isoformat()
+    assert d.latest == today.isoformat()
+
+
+def test_decide_surface_set_diff_flat_count() -> None:
+    today = date(2026, 6, 25)
+    d = decide_surface(
+        current=frozenset({"b", "c"}),
+        previous=frozenset({"a", "b"}),
+        notify_anchor=None,
+        last_install_date=None,
+        today=today,
+    )
+    assert d.surfaced is False
+    assert d.last_install_date == today
+
+
+def test_decide_surface_in_cooldown_suppresses() -> None:
+    today = date(2026, 6, 25)
+    d = decide_surface(
+        current=frozenset({"c"}),
+        previous=frozenset({"c"}),
+        notify_anchor=None,
+        last_install_date=date(2026, 6, 24),
+        today=today,
+    )
+    assert d.surfaced is False
+    assert d.installed == today.isoformat()
+    assert d.latest == today.isoformat()
+
+
+def test_decide_surface_resurfaces_after_cooldown() -> None:
+    today = date(2026, 6, 26)
+    d = decide_surface(
+        current=frozenset({"c"}),
+        previous=frozenset({"c"}),
+        notify_anchor=None,
+        last_install_date=date(2026, 6, 24),
+        today=today,
+    )
+    assert d.surfaced is True
+    assert d.notify_anchor == today
+    assert d.installed == SENTINEL_DATE
+    assert isinstance(d, SurfaceDecision)

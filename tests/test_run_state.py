@@ -16,15 +16,20 @@ def test_round_trip(tmp_path: Path) -> None:
         "apt",
         gist_id="abc123",
         short_url="https://go.don.haus/host-apt-updates",
-        last_clean_date="2026-06-23",
     )
+    s = store.get("apt")
+    s.notify_anchor = "2026-06-23"
+    s.last_install_date = "2026-06-21"
+    s.pending_set = ["a", "b"]
     store.save()
 
     reloaded = StateStore.load(path)
     state = reloaded.get("apt")
     assert state.gist_id == "abc123"
     assert state.short_url == "https://go.don.haus/host-apt-updates"
-    assert state.last_clean_date == "2026-06-23"
+    assert state.notify_anchor == "2026-06-23"
+    assert state.last_install_date == "2026-06-21"
+    assert state.pending_set == ["a", "b"]
 
 
 def test_missing_file_is_empty(tmp_path: Path) -> None:
@@ -39,7 +44,9 @@ def test_update_only_sets_provided_fields(tmp_path: Path) -> None:
     state = store.get("brew")
     assert state.gist_id == "g1"
     assert state.short_url == "https://go.don.haus/host-brew-updates"
-    assert state.last_clean_date is None
+    assert state.notify_anchor is None
+    assert state.last_install_date is None
+    assert state.pending_set == []
 
 
 def test_save_omits_none_keys(tmp_path: Path) -> None:
@@ -50,5 +57,6 @@ def test_save_omits_none_keys(tmp_path: Path) -> None:
     out = path.read_text()
     assert 'gist_id = "abc123"' in out
     assert "short_url" not in out
-    assert "last_clean_date" not in out
+    assert "notify_anchor" not in out
+    assert "pending_set" not in out
     assert "[apt]" in out

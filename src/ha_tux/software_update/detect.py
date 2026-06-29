@@ -26,9 +26,12 @@ __all__ = [
     "REBOOT_REQUIRED_PKGS_PATH",
     "SYSTEMCTL_PATH",
     "SENTINEL_DATE",
+    "SURFACE_COOLDOWN_DAYS",
     "PackageUpdate",
+    "SurfaceDecision",
     "UpdateReport",
     "_run",
+    "decide_surface",
     "entity_title",
     "gist_body",
     "human_bytes",
@@ -43,10 +46,10 @@ __all__ = [
     "release_summary",
     "slugify",
     "status_word",
-    "version_pair",
 ]
 
 DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS: Final = 172800.0  # 2 days
+SURFACE_COOLDOWN_DAYS: Final = 2
 SENTINEL_DATE: Final = "1970-01-01"
 APT_CHECK_PATH: Final = "/usr/lib/update-notifier/apt-check"
 SYSTEMCTL_PATH: Final = "/usr/bin/systemctl"
@@ -270,13 +273,51 @@ def entity_title(label: str, count: int) -> str:
     return f"{label}: {status_word(count)}"
 
 
-def version_pair(count: int, last_clean: date | None, today: date) -> tuple[str, str]:
+@dataclass(frozen=True, slots=True)
+class SurfaceDecision:
+    installed: str
+    latest: str
+    surfaced: bool
+    notify_anchor: date | None
+    last_install_date: date | None
+    pending: frozenset[str]
+
+
+def decide_surface(
+    *,
+    current: frozenset[str],
+    previous: frozenset[str],
+    notify_anchor: date | None,
+    last_install_date: date | None,
+    today: date,
+    cooldown_days: int = SURFACE_COOLDOWN_DAYS,
+) -> SurfaceDecision:
+    if previous - current:  # a pending package was applied
+        last_install_date = today
+        notify_anchor = None  # un-surface; cooldown starts
     today_iso = today.isoformat()
-    if count == 0:
-        return (today_iso, today_iso)
-    if last_clean is not None and last_clean < today:
-        return (last_clean.isoformat(), today_iso)
-    return (SENTINEL_DATE, today_iso)
+    if not current:  # nothing actionable pending
+        return SurfaceDecision(
+            today_iso, today_iso, False, None, last_install_date, current
+        )
+    in_cooldown = (
+        last_install_date is not None
+        and (today - last_install_date).days < cooldown_days
+    )
+    if in_cooldown:  # recently applied; stay quiet
+        return SurfaceDecision(
+            today_iso, today_iso, False, None, last_install_date, current
+        )
+    if notify_anchor is None:  # first surfacing of this batch
+        notify_anchor = today
+    return SurfaceDecision(
+        SENTINEL_DATE,
+        notify_anchor.isoformat(),
+        True,
+        notify_anchor,
+        last_install_date,
+        current,
+    )
 
 
 def human_bytes(n: int) -> str:

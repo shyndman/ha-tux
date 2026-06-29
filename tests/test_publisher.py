@@ -169,6 +169,29 @@ def test_pending_apt_publishes_state(tmp_path: Path, monkeypatch: MonkeyPatch) -
     assert state["release_url"] == "https://go.don.haus/host-apt-updates"
 
 
+def test_pending_persists_anchor_and_set(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _patch_publishers(monkeypatch, "https://go.don.haus/host-apt-updates")
+    report = UpdateReport(
+        manager="apt",
+        label="apt",
+        count=2,
+        packages=(PackageUpdate("a", "1", "2"), PackageUpdate("b", "1", "2")),
+        security=1,
+        download_bytes=88080384,
+    )
+    mp, _ = _make(tmp_path, report)
+
+    asyncio.run(mp.publish())
+
+    reloaded = StateStore.load(tmp_path / "state.toml")
+    state = reloaded.get("apt")
+    assert state.notify_anchor == date.today().isoformat()
+    assert state.pending_set == ["a", "b"]
+    assert state.last_install_date is None
+
+
 def test_query_failure_marks_unavailable(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:

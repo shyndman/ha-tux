@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, cast, final
 
@@ -21,7 +21,9 @@ def state_file_path(state_home: Path | None = None) -> Path:
 class ManagerState:
     gist_id: str | None = None
     short_url: str | None = None
-    last_clean_date: str | None = None
+    notify_anchor: str | None = None  # ISO date; frozen latest_version while on
+    last_install_date: str | None = None  # ISO date; cooldown anchor
+    pending_set: list[str] = field(default_factory=list)  # last-seen actionable names
 
 
 def _dump_toml(data: Mapping[str, ManagerState]) -> str:
@@ -31,7 +33,8 @@ def _dump_toml(data: Mapping[str, ManagerState]) -> str:
         for key, value in (
             ("gist_id", state.gist_id),
             ("short_url", state.short_url),
-            ("last_clean_date", state.last_clean_date),
+            ("notify_anchor", state.notify_anchor),
+            ("last_install_date", state.last_install_date),
         ):
             if value is None:
                 continue
@@ -39,6 +42,13 @@ def _dump_toml(data: Mapping[str, ManagerState]) -> str:
                 f"{manager}.{key} contains a quote or newline: {value!r}"
             )
             lines.append(f'{key} = "{value}"')
+        if state.pending_set:
+            for name in state.pending_set:
+                assert '"' not in name and "\n" not in name, (
+                    f"{manager}.pending_set entry has a quote or newline: {name!r}"
+                )
+            items = ", ".join(f'"{name}"' for name in state.pending_set)
+            lines.append(f"pending_set = [{items}]")
         lines.append("")
     return "\n".join(lines)
 
@@ -64,7 +74,9 @@ class StateStore:
             data[manager] = ManagerState(
                 gist_id=_opt_str(table.get("gist_id")),
                 short_url=_opt_str(table.get("short_url")),
-                last_clean_date=_opt_str(table.get("last_clean_date")),
+                notify_anchor=_opt_str(table.get("notify_anchor")),
+                last_install_date=_opt_str(table.get("last_install_date")),
+                pending_set=_opt_str_list(table.get("pending_set")),
             )
         return cls(path, data)
 
@@ -81,15 +93,12 @@ class StateStore:
         *,
         gist_id: str | None = None,
         short_url: str | None = None,
-        last_clean_date: str | None = None,
     ) -> None:
         state = self.get(manager)
         if gist_id is not None:
             state.gist_id = gist_id
         if short_url is not None:
             state.short_url = short_url
-        if last_clean_date is not None:
-            state.last_clean_date = last_clean_date
 
     def save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,3 +107,9 @@ class StateStore:
 
 def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _opt_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [v for v in cast(list[object], value) if isinstance(v, str)]
