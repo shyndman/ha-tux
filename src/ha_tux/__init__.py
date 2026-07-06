@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import socket
 from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -49,8 +49,6 @@ from ha_tux.zfs.zpool import discover_pool_names
 
 STARTUP_EVENT = "application_started"
 MQTT_RECONNECT_DELAY_SECONDS = 2.0
-INPUT_ACTIVE_RETRY_SECONDS = 5.0
-POWER_RETRY_SECONDS = 5.0
 
 __all__ = [
     "DEFAULT_MQTT_DISCOVERY_PREFIX",
@@ -108,7 +106,7 @@ async def _activate_input_active(act: Activation) -> None:
         ),
         on_change=publisher.set_active,
     )
-    _ = act.tasks.create_task(run_input_active_forever(watcher, publisher))
+    _ = act.tasks.create_task(watcher.run())
 
 
 async def _activate_lock(act: Activation) -> None:
@@ -154,7 +152,7 @@ async def _activate_power(act: Activation) -> None:
         device=new_display_device_proxy(),
         on_change=publisher.update,
     )
-    _ = act.tasks.create_task(run_power_forever(watcher, publisher))
+    _ = act.tasks.create_task(watcher.run())
 
 
 async def _activate_smart(act: Activation) -> None:
@@ -252,37 +250,3 @@ def build_mqtt_settings(config: HaTuxConfig, role: Role) -> Settings.MQTT:
         discovery_prefix=config.mqtt.discovery_prefix,
         state_prefix=config.mqtt.state_prefix,
     )
-
-
-async def run_input_active_forever(
-    watcher: InputActiveWatcher,
-    publisher: InputActivePublisher,
-) -> None:
-    logger = get_logger(LOGGER_NAME)
-    while True:
-        try:
-            await watcher.run()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("input_active_watch_failed")
-            with suppress(Exception):
-                await publisher.set_available(False)
-            await asyncio.sleep(INPUT_ACTIVE_RETRY_SECONDS)
-
-
-async def run_power_forever(
-    watcher: PowerWatcher,
-    publisher: PowerPublisher,
-) -> None:
-    logger = get_logger(LOGGER_NAME)
-    while True:
-        try:
-            await watcher.run()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("power_watch_failed")
-            with suppress(Exception):
-                await publisher.set_available(False)
-            await asyncio.sleep(POWER_RETRY_SECONDS)
