@@ -1,3 +1,5 @@
+<img src="assets/logo.png" alt="ha-tux" width="128" align="right">
+
 # ha-tux
 
 Bridges a Linux host to Home Assistant over MQTT.
