@@ -5,7 +5,7 @@ from typing import Generic, TypeVar, override
 
 import pytest
 
-from ha_tux.media.mpris import (
+from ha_tux.mpris.mpris import (
     MICROSECONDS_PER_SECOND,
     MPRIS_NO_TRACK_PATH,
     MetadataMap,

@@ -8,7 +8,7 @@ from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable._session import SessionLike
 from ha_mqtt_discoverable.sensors import Button, ButtonInfo
 
-from ha_tux.lock.screensaver import GnomeScreenSaverAsync, new_screensaver_proxy
+from ha_tux.screen_lock.screensaver import GnomeScreenSaverAsync, new_screensaver_proxy
 
 LOGGER = logging.getLogger(__name__)
 

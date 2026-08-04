@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pytest import MonkeyPatch
 
-import ha_tux.media.entity as ha_media_module
+import ha_tux.mpris.entity as ha_mpris_module
 from ha_mqtt_discoverable import DeviceInfo
-from ha_tux.media.entity import (
+from ha_tux.mpris.entity import (
     HA_TUX_MEDIA_DEVICE_CLASS,
     HA_TUX_MEDIA_NAME,
     HA_TUX_MEDIA_OBJECT_ID,
@@ -29,7 +29,7 @@ def test_media_player_entity_builds_host_device_by_default(
 ) -> None:
     device = DeviceInfo(name="Linux Laptop", identifiers="ha-tux:machine-id")
 
-    monkeypatch.setattr(ha_media_module, "build_host_device_info", lambda: device)
+    monkeypatch.setattr(ha_mpris_module, "build_host_device_info", lambda: device)
 
     entity = build_media_player_entity(host_prefix="testbox")
 

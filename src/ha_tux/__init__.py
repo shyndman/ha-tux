@@ -20,22 +20,22 @@ from ha_tux.config import (
     load_config,
     parse_role,
 )
-from ha_tux.media.entity import build_media_player_entity
+from ha_tux.mpris.entity import build_media_player_entity
 from ha_tux.zfs.entity import build_zfs_pool_publisher
 from ha_tux.host_device import build_host_device_info, host_slug
-from ha_tux.presence.entity import (
+from ha_tux.input_active.entity import (
     InputActivePublisher,
     build_input_active_publisher,
 )
-from ha_tux.presence.monitor import (
+from ha_tux.input_active.monitor import (
     MILLISECONDS_PER_SECOND,
     InputActiveWatcher,
     new_idle_monitor_proxy,
 )
-from ha_tux.lock.entity import LockPublisher, build_lock_publisher
+from ha_tux.screen_lock.entity import LockPublisher, build_lock_publisher
 from ha_tux.power.entity import PowerPublisher, build_power_publisher
 from ha_tux.power.monitor import PowerWatcher, new_display_device_proxy
-from ha_tux.media.bridge import (
+from ha_tux.mpris.bridge import (
     DEFAULT_POSITION_POLL_SECONDS,
     AsyncMprisMediaPlayerBridge,
     create_bridge,
@@ -175,9 +175,9 @@ _SESSION_ROLES: frozenset[Role] = frozenset({"session", "all"})
 _HOST_ROLES: frozenset[Role] = frozenset({"host", "all"})
 
 FEATURES: tuple[Feature, ...] = (
-    Feature("media", _SESSION_ROLES, _activate_media),
+    Feature("mpris", _SESSION_ROLES, _activate_media),
     Feature("input_active", _SESSION_ROLES, _activate_input_active),
-    Feature("lock", _SESSION_ROLES, _activate_lock),
+    Feature("screen_lock", _SESSION_ROLES, _activate_lock),
     Feature("zfs", _HOST_ROLES, _activate_zfs),
     Feature("software_update", _HOST_ROLES, _activate_software_update),
     Feature("power", _HOST_ROLES, _activate_power),

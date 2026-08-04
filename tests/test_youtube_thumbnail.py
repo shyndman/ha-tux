@@ -1,4 +1,4 @@
-from ha_tux.media.album_art import youtube_thumbnail_url
+from ha_tux.mpris.album_art import youtube_thumbnail_url
 
 _THUMB = "https://i.ytimg.com/vi/S0zHEEG-oF4/hq720.jpg"
 

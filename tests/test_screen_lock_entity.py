@@ -13,9 +13,9 @@ from ha_mqtt_discoverable._session import (
 )
 from ha_mqtt_discoverable.sensors import Button
 
-import ha_tux.lock.entity as lock_module
-from ha_tux.lock.entity import LockPublisher
-from ha_tux.lock.screensaver import GnomeScreenSaverAsync
+import ha_tux.screen_lock.entity as lock_module
+from ha_tux.screen_lock.entity import LockPublisher
+from ha_tux.screen_lock.screensaver import GnomeScreenSaverAsync
 
 DEVICE = DeviceInfo(name="ha-tux", identifiers="ha-tux-test")
 

@@ -8,7 +8,10 @@ from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable._session import PublishPayload, SessionLike
 from ha_mqtt_discoverable.sensors import BinarySensor
 
-from ha_tux.presence.entity import InputActivePublisher, build_input_active_publisher
+from ha_tux.input_active.entity import (
+    InputActivePublisher,
+    build_input_active_publisher,
+)
 
 DEVICE = DeviceInfo(name="ha-tux", identifiers="ha-tux-test")
 
