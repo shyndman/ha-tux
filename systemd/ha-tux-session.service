@@ -21,6 +21,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=tmpfs
 BindPaths=/home/shyndman/.config/ha-tux
+BindReadOnlyPaths=-/home/shyndman/.mozilla/firefox/firefox-mpris
 BindReadOnlyPaths=/run/user/1000/bus
 PrivateTmp=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
