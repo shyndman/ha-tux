@@ -63,10 +63,10 @@ ConfigSection = Literal[
     "mqtt", "mpris", "zfs", "input_active", "software_update", "smart"
 ]
 
-Role = Literal["session", "host", "all"]
+Role = Literal["session", "host", "updates", "all"]
 DEFAULT_ROLE: Final = "all"
 HA_TUX_ROLE_ENV: Final = "HA_TUX_ROLE"
-VALID_ROLES: Final = ("session", "host", "all")
+VALID_ROLES: Final = ("session", "host", "updates", "all")
 
 
 def parse_role(env: Mapping[str, str] = os.environ) -> Role:
@@ -75,7 +75,7 @@ def parse_role(env: Mapping[str, str] = os.environ) -> Role:
         return DEFAULT_ROLE
     if raw not in VALID_ROLES:
         raise ConfigError(
-            f"{HA_TUX_ROLE_ENV} must be one of session, host, all (got {raw!r})"
+            f"{HA_TUX_ROLE_ENV} must be one of session, host, updates, all (got {raw!r})"
         )
     return raw
 

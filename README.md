@@ -10,8 +10,20 @@ It favors least-privilege over convenience: the daemon exposes a remotely trigge
 - **ZFS pools**: publishes pool state as HA entities.
 - **Package updates**: publishes apt and Homebrew "updates available" as HA update entities (Homebrew gets a working Install button). The full pending-package list lives in a per-manager secret GitHub gist surfaced through a chhoto shortlink.
 
-Installed via `task install` into a self-contained venv at `/opt/ha-tux` and run as two hardened **system** services, one set per host: `ha-tux-session.service` runs as `shyndman` (MPRIS + input presence; needs the session bus, tightened with `NoNewPrivileges=yes`), and `ha-tux-host.service` runs as a locked-down `ha-tux` system user (ZFS + package updates; brew detection via a shared `brew` group, gh via `GH_TOKEN`). Both are deliberately sandboxed (`ProtectHome=tmpfs`, `ProtectSystem=strict`, a restricted syscall filter, and a tight bind allowlist) — a conscious effort to avoid the gaping holes other HA-on-Linux bridges tend to ship. Applying upgrades is delegated to owner-run oneshot services authorized by polkit: apt via `ha-tux-apt-upgrade.service`, and Homebrew via `ha-tux-brew-upgrade.service` running as `shyndman` (the brew prefix owner), which keeps the prefix's zsh completion dirs non-group-writable for compinit.
+`task install` installs a self-contained virtual environment at `/opt/ha-tux` and starts three system services:
+
+- `ha-tux-session.service` runs as `shyndman` for MPRIS and input presence.
+- `ha-tux-host.service` runs as `ha-tux` for ZFS, power, and SMART state.
+- `ha-tux-updates.service` runs as `shyndman` for apt and Homebrew update checks.
+
+All three services use `ProtectHome=tmpfs`, `ProtectSystem=strict`, `NoNewPrivileges=yes`, a restricted syscall filter, and explicit mounts.
+The update service can write to the Homebrew prefix and `/var/lib/ha-tux-updates`, but cannot access your personal files.
+Homebrew uses your account's ownership and permissions. The installer does not add shared group-write access or Git ownership exceptions.
+The update service delegates upgrades to `ha-tux-apt-upgrade.service` and `ha-tux-brew-upgrade.service`. Polkit authorizes your account to start these services.
 
 The session service mounts `/home/shyndman/.mozilla/firefox/firefox-mpris` read-only to read Firefox album art. If the directory does not exist at service start, the mount is skipped. Restart the session service after Firefox creates it.
 
-The package-updates source needs the `gh` (gist scope) and `chhoto` CLIs on `PATH`; since the sandbox (`ProtectHome=tmpfs`) leaves no `gh auth login` credential, the operator supplies a fine-grained GitHub PAT scoped to gist as `GH_TOKEN` in `/etc/ha-tux/host.env` (loaded by the host unit's `EnvironmentFile=-/etc/ha-tux/host.env`). Runtime state persists in `$XDG_STATE_HOME/ha-tux/state.toml`.
+The package-update service needs the `gh` and `chhoto` commands on `PATH`. Supply `GH_TOKEN` with gist access in `/etc/ha-tux/host.env`.
+The update service loads this file and uses `/var/lib/ha-tux-updates` as its home directory.
+Its config is in `.config/ha-tux/config.toml`, and its state is in `.local/state/ha-tux/state.toml` under that directory.
+The installer preserves existing update state on later installs.

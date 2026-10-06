@@ -173,13 +173,14 @@ async def _activate_smart(act: Activation) -> None:
 
 _SESSION_ROLES: frozenset[Role] = frozenset({"session", "all"})
 _HOST_ROLES: frozenset[Role] = frozenset({"host", "all"})
+_UPDATE_ROLES: frozenset[Role] = frozenset({"updates", "all"})
 
 FEATURES: tuple[Feature, ...] = (
     Feature("mpris", _SESSION_ROLES, _activate_media),
     Feature("input_active", _SESSION_ROLES, _activate_input_active),
     Feature("screen_lock", _SESSION_ROLES, _activate_lock),
     Feature("zfs", _HOST_ROLES, _activate_zfs),
-    Feature("software_update", _HOST_ROLES, _activate_software_update),
+    Feature("software_update", _UPDATE_ROLES, _activate_software_update),
     Feature("power", _HOST_ROLES, _activate_power),
     Feature("smart", _HOST_ROLES, _activate_smart),
 )

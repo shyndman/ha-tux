@@ -2,7 +2,7 @@ polkit.addRule(function (action, subject) {
     if (
         action.id == "org.freedesktop.systemd1.manage-units" &&
         action.lookup("unit") == "ha-tux-apt-upgrade.service" &&
-        subject.user == "ha-tux"
+        subject.user == "shyndman"
     ) {
         return polkit.Result.YES;
     }

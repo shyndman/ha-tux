@@ -5,10 +5,11 @@ vars:
   SYSTEM_SYSTEMD_DIR: /etc/systemd/system
   SESSION_UNIT: ha-tux-session.service
   HOST_UNIT: ha-tux-host.service
+  UPDATE_UNIT: ha-tux-updates.service
+  UPDATE_HOME: /var/lib/ha-tux-updates
   OPT_DIR: /opt/ha-tux
   HOST_USER: ha-tux
   HOST_HOME: /var/lib/ha-tux
-  BREW_PREFIX: /home/linuxbrew/.linuxbrew
   APT_UPGRADE_UNIT: ha-tux-apt-upgrade.service
   BREW_UPGRADE_UNIT: ha-tux-brew-upgrade.service
   POLKIT_RULES_DIR: /etc/polkit-1/rules.d
@@ -19,7 +20,7 @@ vars:
 
 tasks:
   install:
-    desc: Install and start the session and host services
+    desc: Install and start the services
     cmds:
       # Retire the old single deployments (clean cutover).
       - systemctl --user disable --now ha-tux.service 2>/dev/null || true
@@ -29,26 +30,20 @@ tasks:
       - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/ha-tux.service"
       # Locked-down service user for the host role.
       - getent passwd {{.HOST_USER}} >/dev/null || sudo useradd --system --create-home --home-dir {{.HOST_HOME}} --shell /usr/sbin/nologin {{.HOST_USER}}
-      # Shared brew group so the service user can run brew update/upgrade against the prefix.
-      - getent group brew >/dev/null || sudo groupadd brew
-      - sudo usermod --append --groups brew "$(id -un)"
-      - sudo usermod --append --groups brew {{.HOST_USER}}
-      - sudo chgrp --recursive brew {{.BREW_PREFIX}}
-      - sudo chmod --recursive g+w {{.BREW_PREFIX}}
-      - sudo find {{.BREW_PREFIX}} -type d -exec chmod g+s {} +
-      # compinit rejects group-writable completion dirs; drop g+w there (brew relink of zsh completions falls back to an interactive `brew upgrade` as the owner). ponytail: scoped to zsh, widen if bash/fish completions also warn.
-      - sudo chmod g-w {{.BREW_PREFIX}}/share/zsh {{.BREW_PREFIX}}/share/zsh/site-functions
-      # Seed the host user's config and state from the invoking user's (preserves gist ids).
-      - sudo install -d -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0750 {{.HOST_HOME}}/.config/ha-tux {{.HOST_HOME}}/.local/state/ha-tux
+      # Seed the host config and the update service state.
+      - sudo install -d -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0750 {{.HOST_HOME}}/.config/ha-tux
       - if test -f "{{.HOME}}/.config/ha-tux/config.toml"; then sudo install -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0640 "{{.HOME}}/.config/ha-tux/config.toml" {{.HOST_HOME}}/.config/ha-tux/config.toml; fi
-      - if test -f "{{.HOME}}/.local/state/ha-tux/state.toml"; then sudo install -o {{.HOST_USER}} -g {{.HOST_USER}} -m 0640 "{{.HOME}}/.local/state/ha-tux/state.toml" {{.HOST_HOME}}/.local/state/ha-tux/state.toml; fi
+      - sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0750 {{.UPDATE_HOME}}/.config/ha-tux {{.UPDATE_HOME}}/.local/state/ha-tux
+      - if test -f "{{.HOME}}/.config/ha-tux/config.toml"; then sudo install -o "$(id -un)" -g "$(id -gn)" -m 0640 "{{.HOME}}/.config/ha-tux/config.toml" {{.UPDATE_HOME}}/.config/ha-tux/config.toml; fi
+      - if ! sudo test -f "{{.UPDATE_HOME}}/.local/state/ha-tux/state.toml" && test -f "{{.HOME}}/.local/state/ha-tux/state.toml"; then sudo install -o "$(id -un)" -g "$(id -gn)" -m 0640 "{{.HOME}}/.local/state/ha-tux/state.toml" {{.UPDATE_HOME}}/.local/state/ha-tux/state.toml; fi
       # Self-contained /opt venv: uv-managed 3.13 interpreter AND the venv both under /opt.
       - test -d {{.OPT_DIR}} || sudo install -d -o "$(id -un)" -g "$(id -gn)" {{.OPT_DIR}}
       - UV_PYTHON_INSTALL_DIR={{.OPT_DIR}}/python uv python install 3.13
       - UV_PYTHON_INSTALL_DIR={{.OPT_DIR}}/python UV_PROJECT_ENVIRONMENT={{.OPT_DIR}}/venv uv sync --no-dev --no-editable --frozen --reinstall-package ha-tux --python-preference only-managed --python 3.13
-      # Install and start both units.
+      # Install and start the services.
       - sudo install -m 0644 "systemd/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}"
       - sudo install -m 0644 "systemd/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}"
+      - sudo install -m 0644 "systemd/{{.UPDATE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.UPDATE_UNIT}}"
       - sudo install -m 0644 "systemd/{{.APT_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.APT_UPGRADE_UNIT}}"
       - sudo install -m 0644 "systemd/{{.BREW_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.BREW_UPGRADE_UNIT}}"
       - sudo install -m 0644 "polkit/{{.POLKIT_RULE}}" "{{.POLKIT_RULES_DIR}}/{{.POLKIT_RULE}}"
@@ -58,19 +53,19 @@ tasks:
       - sudo systemctl daemon-reload
       - sudo systemctl enable --now {{.SMART_TIMER_UNIT}}
       - sudo systemctl start {{.SMART_SCAN_UNIT}}
-      - sudo systemctl enable {{.SESSION_UNIT}} {{.HOST_UNIT}}
-      - sudo systemctl restart {{.SESSION_UNIT}} {{.HOST_UNIT}}
+      - sudo systemctl enable {{.SESSION_UNIT}} {{.HOST_UNIT}} {{.UPDATE_UNIT}}
+      - sudo systemctl restart {{.SESSION_UNIT}} {{.HOST_UNIT}} {{.UPDATE_UNIT}}
 
   uninstall:
-    desc: Stop and remove both services
+    desc: Stop and remove the services
     cmds:
-      - sudo systemctl disable --now {{.SESSION_UNIT}} {{.HOST_UNIT}} || true
+      - sudo systemctl disable --now {{.SESSION_UNIT}} {{.HOST_UNIT}} {{.UPDATE_UNIT}} || true
       - sudo systemctl disable --now {{.SMART_TIMER_UNIT}} || true
-      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.APT_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.BREW_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_SCAN_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_TIMER_UNIT}}"
+      - sudo rm -f "{{.SYSTEM_SYSTEMD_DIR}}/{{.SESSION_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.HOST_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.UPDATE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.APT_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.BREW_UPGRADE_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_SCAN_UNIT}}" "{{.SYSTEM_SYSTEMD_DIR}}/{{.SMART_TIMER_UNIT}}"
       - sudo rm -f "{{.POLKIT_RULES_DIR}}/{{.POLKIT_RULE}}" "{{.POLKIT_RULES_DIR}}/{{.BREW_POLKIT_RULE}}"
       - sudo systemctl daemon-reload
 
   logs:
     desc: Display the service logs
     cmds:
-      - journalctl -o cat --no-pager -u {{.SESSION_UNIT}} -u {{.HOST_UNIT}} {{.CLI_ARGS}}
+      - journalctl -o cat --no-pager -u {{.SESSION_UNIT}} -u {{.HOST_UNIT}} -u {{.UPDATE_UNIT}} {{.CLI_ARGS}}

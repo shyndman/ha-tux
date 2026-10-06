@@ -12,10 +12,13 @@ def test_session_role_activates_session_features() -> None:
 def test_host_role_activates_host_features() -> None:
     assert {f.name for f in features_for_role("host")} == {
         "zfs",
-        "software_update",
         "power",
         "smart",
     }
+
+
+def test_updates_role_activates_only_package_updates() -> None:
+    assert {f.name for f in features_for_role("updates")} == {"software_update"}
 
 
 def test_all_role_activates_every_feature() -> None:

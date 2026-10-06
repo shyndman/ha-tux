@@ -66,6 +66,7 @@ def test_build_mqtt_settings_suffixes_client_name_per_role() -> None:
 
     assert build_mqtt_settings(config, "session").client_name == "ha-tux-session"
     assert build_mqtt_settings(config, "host").client_name == "ha-tux-host"
+    assert build_mqtt_settings(config, "updates").client_name == "ha-tux-updates"
     assert build_mqtt_settings(config, "all").client_name == "ha-tux"
 
 
