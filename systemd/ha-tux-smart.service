@@ -4,4 +4,5 @@ Description=Scan SMART health for ha-tux
 [Service]
 Type=oneshot
 TimeoutStartSec=120
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/ha-tux/venv/bin/ha-tux-smart-scan

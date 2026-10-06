@@ -27,3 +27,6 @@ The package-update service needs the `gh` and `chhoto` commands on `PATH`. Suppl
 The update service loads this file and uses `/var/lib/ha-tux-updates` as its home directory.
 Its config is in `.config/ha-tux/config.toml`, and its state is in `.local/state/ha-tux/state.toml` under that directory.
 The installer preserves existing update state on later installs.
+
+The SMART scanner runs as root to read drive-health data.
+Its service sets `PYTHONDONTWRITEBYTECODE=1` to prevent root-owned Python caches from blocking later installs.
