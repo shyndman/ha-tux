@@ -16,6 +16,7 @@ from ha_tux.mpris.mpris import (
     MICROSECONDS_PER_SECOND,
     DbusDaemonAsync,
     MprisPlayerAsync,
+    PlayerctldNoActivePlayerError,
     PropertiesChanged,
 )
 
@@ -26,10 +27,15 @@ T = TypeVar("T")
 class AsyncProperty(Generic[T], Awaitable[T]):
     value: T
     writes: list[T] = field(default_factory=list)
+    reads: int = 0
+    error: Exception | None = None
 
     @override
     def __await__(self) -> Generator[None, None, T]:
         async def read() -> T:
+            self.reads += 1
+            if self.error is not None:
+                raise self.error
             return self.value
 
         return read().__await__()
@@ -296,5 +302,74 @@ def test_observer_publish_failure_stops_bridge() -> None:
         with pytest.raises(RuntimeError, match="publish failed"):
             await asyncio.wait_for(bridge.wait_until_stopped_or_failed(), timeout=1)
         await bridge.stop()
+
+    asyncio.run(run())
+
+
+def test_no_active_player_snapshot_clears_state_and_stops_polling(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def run() -> None:
+        bridge, player, media, _dbus = build_bridge()
+        caplog.set_level(logging.INFO, logger="ha_tux.mpris.bridge")
+
+        await bridge.start()
+        player.playback_status.error = PlayerctldNoActivePlayerError("No active player")
+        media.calls.clear()
+
+        await bridge.publish_snapshot("properties_changed")
+        player.position.reads = 0
+        await asyncio.sleep(0.05)
+
+        assert player.position.reads == 0
+        assert ("available", False) in media.calls
+
+        no_player_logs = [
+            record
+            for record in caplog.records
+            if record.message == "No active MPRIS player"
+        ]
+        assert len(no_player_logs) == 1
+        assert no_player_logs[0].levelno == logging.INFO
+        assert no_player_logs[0].exc_info is None
+
+        player.playback_status.error = None
+        media.calls.clear()
+        await bridge.publish_snapshot("properties_changed")
+
+        assert ("available", True) in media.calls
+        assert ("state", "playing") in media.calls
+        assert ("title", "Song") in media.calls
+        await bridge.stop()
+
+    asyncio.run(run())
+
+
+def test_no_active_player_during_position_poll_marks_unavailable_and_stops(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def run() -> None:
+        bridge, player, media, _dbus = build_bridge()
+        caplog.set_level(logging.INFO, logger="ha_tux.mpris.bridge")
+
+        await bridge.start()
+        media.calls.clear()
+        player.position.reads = 0
+        player.position.error = PlayerctldNoActivePlayerError("No active player")
+
+        await asyncio.sleep(0.05)
+        await bridge.stop()
+
+        assert player.position.reads == 1
+        assert ("available", False) in media.calls
+
+        poll_logs = [
+            record
+            for record in caplog.records
+            if record.message == "No active MPRIS player while polling position"
+        ]
+        assert len(poll_logs) == 1
+        assert poll_logs[0].levelno == logging.INFO
+        assert poll_logs[0].exc_info is None
 
     asyncio.run(run())

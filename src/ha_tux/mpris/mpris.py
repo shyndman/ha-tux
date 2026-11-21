@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Mapping, Sequence
 from typing import Final, Literal, Protocol, cast
 
 from sdbus import (
+    DbusFailedError,
     DbusInterfaceCommonAsync,
     dbus_method_async,
     dbus_property_async,
@@ -13,9 +14,17 @@ MPRIS_OBJECT_PATH: Final = "/org/mpris/MediaPlayer2"
 DBUS_DAEMON_SERVICE_NAME: Final = "org.freedesktop.DBus"
 DBUS_DAEMON_OBJECT_PATH: Final = "/org/freedesktop/DBus"
 PLAYERCTLD_SERVICE_NAME: Final = "org.mpris.MediaPlayer2.playerctld"
+PLAYERCTLD_NO_ACTIVE_PLAYER_ERROR: Final = (
+    "com.github.altdesktop.playerctld.NoActivePlayer"
+)
 MPRIS_PLAYER_INTERFACE: Final = "org.mpris.MediaPlayer2.Player"
 MPRIS_NO_TRACK_PATH: Final = "/org/mpris/MediaPlayer2/TrackList/NoTrack"
 MICROSECONDS_PER_SECOND: Final = 1_000_000
+
+
+class PlayerctldNoActivePlayerError(DbusFailedError):
+    dbus_error_name: str = PLAYERCTLD_NO_ACTIVE_PLAYER_ERROR
+
 
 MediaPlayerState = Literal["playing", "paused", "stopped", "idle", "off"]
 ToggleAction = Literal["Pause", "Play"]

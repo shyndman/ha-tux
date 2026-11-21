@@ -66,22 +66,27 @@ class _CachedAlbumArt:
 class AlbumArtResolver:
     def __init__(self) -> None:
         self._cached_file: _CachedAlbumArt | None = None
+        self._last_missing_url: str | None = None
 
     def resolve(self, art_url: str | None) -> AlbumArtPayload:
         if art_url is None or art_url == "":
+            self._last_missing_url = None
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         parsed = urlparse(art_url)
         if parsed.scheme in HTTP_SCHEMES:
+            self._last_missing_url = None
             return AlbumArtPayload(url=art_url, remotely_accessible=True)
 
         if parsed.scheme != "file":
+            self._last_missing_url = None
             LOGGER.warning(
                 "Unsupported album art URL scheme", extra={"scheme": parsed.scheme}
             )
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         if parsed.netloc not in LOCAL_FILE_HOSTS:
+            self._last_missing_url = None
             LOGGER.warning(
                 "Unsupported album art file host", extra={"host": parsed.netloc}
             )
@@ -92,9 +97,15 @@ class AlbumArtResolver:
     def _resolve_file_url(self, original_url: str, path: Path) -> AlbumArtPayload:
         try:
             stat = path.stat()
+        except FileNotFoundError:
+            self._log_missing_file(original_url, path)
+            return AlbumArtPayload(url="", remotely_accessible=False)
         except OSError:
+            self._last_missing_url = None
             LOGGER.exception("Unable to stat album art file", extra={"path": str(path)})
             return AlbumArtPayload(url="", remotely_accessible=False)
+
+        self._last_missing_url = None
 
         if not path.is_file():
             LOGGER.warning(
@@ -113,6 +124,9 @@ class AlbumArtResolver:
 
         try:
             file_bytes = path.read_bytes()
+        except FileNotFoundError:
+            self._log_missing_file(original_url, path)
+            return AlbumArtPayload(url="", remotely_accessible=False)
         except OSError:
             LOGGER.exception("Unable to read album art file", extra={"path": str(path)})
             return AlbumArtPayload(url="", remotely_accessible=False)
@@ -133,6 +147,13 @@ class AlbumArtResolver:
             payload=payload,
         )
         return payload
+
+    def _log_missing_file(self, original_url: str, path: Path) -> None:
+        if self._last_missing_url == original_url:
+            return
+
+        self._last_missing_url = original_url
+        LOGGER.warning("Album art file not found", extra={"path": str(path)})
 
 
 def detect_image_mime_type(file_bytes: bytes) -> SupportedImageMimeType | None:

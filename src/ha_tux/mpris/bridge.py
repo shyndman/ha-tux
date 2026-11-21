@@ -27,6 +27,7 @@ from ha_tux.mpris.mpris import (
     DbusDaemonAsync,
     MetadataMap,
     MprisPlayerAsync,
+    PlayerctldNoActivePlayerError,
     PropertiesChanged,
     artist_text_from_metadata,
     duration_seconds_from_metadata,
@@ -118,9 +119,13 @@ class AsyncMprisMediaPlayerBridge:
     async def publish_snapshot(self, reason: PublishReason) -> None:
         try:
             snapshot = await self._read_snapshot()
+        except PlayerctldNoActivePlayerError:
+            LOGGER.info("No active MPRIS player", extra={"reason": reason})
+            await self._mark_unavailable()
+            return
         except Exception:
             LOGGER.exception("Unable to read MPRIS snapshot", extra={"reason": reason})
-            await self.media_player.set_available(False)
+            await self._mark_unavailable()
             return
 
         await self.media_player.set_available(True)
@@ -327,11 +332,17 @@ class AsyncMprisMediaPlayerBridge:
             snapshot = self._last_snapshot
             if snapshot is None or snapshot.state != "playing":
                 continue
+
             try:
                 position_us = cast(int, await _await_property(self.player.position))
+            except PlayerctldNoActivePlayerError:
+                LOGGER.info("No active MPRIS player while polling position")
+                await self._mark_unavailable()
+                continue
             except Exception:
                 LOGGER.exception("Unable to read MPRIS position")
                 continue
+
             position = microseconds_to_seconds(position_us)
             if (
                 self._last_snapshot is not None
@@ -351,11 +362,14 @@ class AsyncMprisMediaPlayerBridge:
 
     async def _handle_name_owner_changed(self, new_owner: str) -> None:
         if new_owner == "":
-            await self.media_player.set_available(False)
-            self._last_snapshot = None
+            await self._mark_unavailable()
             return
         self.player = new_mpris_player_proxy(self.service_name)
         await self.publish_snapshot("name_owner_changed")
+
+    async def _mark_unavailable(self) -> None:
+        self._last_snapshot = None
+        await self.media_player.set_available(False)
 
     def _schedule_command(self, awaitable: Coroutine[object, object, None]) -> None:
         task: asyncio.Task[None] = asyncio.create_task(awaitable)

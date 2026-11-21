@@ -1,5 +1,8 @@
+import logging
 from base64 import b64encode
 from pathlib import Path
+
+import pytest
 
 from ha_tux.mpris.album_art import AlbumArtResolver, detect_image_mime_type
 
@@ -62,3 +65,32 @@ def test_album_art_cache_reuses_unchanged_file(tmp_path: Path) -> None:
     second = resolver.resolve(art.as_uri())
 
     assert first == second
+
+
+def test_missing_album_art_file_warns_once_without_traceback(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    art = tmp_path / "deleted-firefox-art.png"
+    art_uri = art.as_uri()
+    resolver = AlbumArtResolver()
+    caplog.set_level(logging.WARNING, logger="ha_tux.mpris.album_art")
+
+    first = resolver.resolve(art_uri)
+    second = resolver.resolve(art_uri)
+
+    assert first.url == ""
+    assert first.remotely_accessible is False
+    assert second == first
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    assert caplog.records[0].message == "Album art file not found"
+    assert caplog.records[0].exc_info is None
+
+    _ = art.write_bytes(PNG_BYTES)
+    resolved = resolver.resolve(art_uri)
+    assert resolved.remotely_accessible is True
+
+    art.unlink()
+    missing_again = resolver.resolve(art_uri)
+    assert missing_again.url == ""
+    assert len(caplog.records) == 2
