@@ -29,4 +29,5 @@ Its config is in `.config/ha-tux/config.toml`, and its state is in `.local/state
 The installer preserves existing update state on later installs.
 
 The SMART scanner runs as root to read drive-health data.
+The NVMe sensor **SMART endurance** reports the drive firmware's estimated percentage of lifetime endurance consumed.
 Its service sets `PYTHONDONTWRITEBYTECODE=1` to prevent root-owned Python caches from blocking later installs.

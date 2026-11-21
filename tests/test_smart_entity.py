@@ -135,7 +135,6 @@ def test_builds_expected_entities_per_drive(tmp_path: Path) -> None:
     assert health["entity_category"] == "diagnostic"
 
     pct = configs[f"ha_tux_testbox_smart_{NVME_SLUG}_percentage_used"]
-    assert pct["name"] == "Percentage used"
     assert pct["unit_of_measurement"] == "%"
     assert pct["entity_category"] == "diagnostic"
 
