@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import re
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Final
 
 from libsh import get_logger
@@ -34,10 +32,14 @@ async def _create_gist(
     *,
     manager: str,
     description: str,
-    tmpfile: Path,
+    filename: str,
+    body: str,
     runner: CommandRunner,
 ) -> GistResult | None:
-    result = await runner(["gh", "gist", "create", "--desc", description, str(tmpfile)])
+    result = await runner(
+        ["gh", "gist", "create", "--desc", description, "--filename", filename, "-"],
+        stdin=body,
+    )
     if result.returncode != 0:
         LOGGER.info(
             "Failed to create update summary gist",
@@ -63,11 +65,12 @@ async def _edit_gist(
     manager: str,
     gist_id: str,
     filename: str,
-    tmpfile: Path,
+    body: str,
     runner: CommandRunner,
 ) -> GistResult | None:
     result = await runner(
-        ["gh", "gist", "edit", gist_id, "--filename", filename, str(tmpfile)]
+        ["gh", "gist", "edit", gist_id, "--filename", filename, "-"],
+        stdin=body,
     )
     if result.returncode != 0:
         LOGGER.info(
@@ -90,27 +93,24 @@ async def publish_gist(
     runner: CommandRunner = subprocess_runner,
 ) -> GistResult | None:
     """Create or update the per-manager secret gist. Returns ``None`` on failure."""
+    filename = f"{manager}-updates.md"
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            filename = f"{manager}-updates.md"
-            tmpfile = Path(tmpdir) / filename
-            _ = tmpfile.write_text(body)
-
-            if existing_gist_id is None:
-                return await _create_gist(
-                    manager=manager,
-                    description=description,
-                    tmpfile=tmpfile,
-                    runner=runner,
-                )
-
-            return await _edit_gist(
+        if existing_gist_id is None:
+            return await _create_gist(
                 manager=manager,
-                gist_id=existing_gist_id,
+                description=description,
                 filename=filename,
-                tmpfile=tmpfile,
+                body=body,
                 runner=runner,
             )
+
+        return await _edit_gist(
+            manager=manager,
+            gist_id=existing_gist_id,
+            filename=filename,
+            body=body,
+            runner=runner,
+        )
     except Exception as error:
         LOGGER.info(
             "Unexpected error while publishing update gist",

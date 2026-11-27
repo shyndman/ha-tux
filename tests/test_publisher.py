@@ -26,9 +26,13 @@ class FakeRunner:
         self._install_rc: int = install_rc
 
     async def __call__(
-        self, cmd: Sequence[str], *, env: Mapping[str, str] | None = None
+        self,
+        cmd: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        stdin: str | None = None,
     ) -> CommandResult:
-        del env
+        del env, stdin
         args = list(cmd)
         self.commands.append(args)
 

@@ -274,9 +274,12 @@ def test_query_apt_filters_phased_and_reads_reboot(tmp_path: Path) -> None:
     _ = apt_check.write_text("#!/bin/sh\n")
 
     async def runner(
-        cmd: Sequence[str], *, env: Mapping[str, str] | None = None
+        cmd: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        stdin: str | None = None,
     ) -> CommandResult:
-        del env
+        del env, stdin
         if cmd[1:3] == ["list", "--upgradable"]:
             return CommandResult(
                 0,
@@ -318,9 +321,12 @@ def test_query_apt_filters_phased_and_reads_reboot(tmp_path: Path) -> None:
 
 def test_query_brew_excludes_pinned_count() -> None:
     async def runner(
-        cmd: Sequence[str], *, env: Mapping[str, str] | None = None
+        cmd: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        stdin: str | None = None,
     ) -> CommandResult:
-        del env
+        del env, stdin
         if cmd[1] == "update":
             return CommandResult(0, "", "")
         if cmd[1] == "outdated":

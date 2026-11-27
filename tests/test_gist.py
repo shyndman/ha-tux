@@ -12,14 +12,20 @@ from ha_tux.software_update.gist import GistResult, publish_gist, publish_shortl
 class _Recorder:
     def __init__(self, results: list[CommandResult]) -> None:
         self.calls: list[list[str]] = []
+        self.stdins: list[str | None] = []
         self._results: list[CommandResult] = results
         self._index: int = 0
 
     async def __call__(
-        self, cmd: Sequence[str], *, env: Mapping[str, str] | None = None
+        self,
+        cmd: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        stdin: str | None = None,
     ) -> CommandResult:
         del env
         self.calls.append(list(cmd))
+        self.stdins.append(stdin)
         result = self._results[self._index]
         self._index += 1
         return result
@@ -41,8 +47,19 @@ def test_publish_gist_create_parses_id_and_url() -> None:
     assert result == GistResult(
         url="https://gist.github.com/me/abc123", gist_id="abc123"
     )
-    assert runner.calls[0][:5] == ["gh", "gist", "create", "--desc", "desc"]
-    assert runner.calls[0][-1].endswith("apt-updates.md")
+    assert runner.calls == [
+        [
+            "gh",
+            "gist",
+            "create",
+            "--desc",
+            "desc",
+            "--filename",
+            "apt-updates.md",
+            "-",
+        ]
+    ]
+    assert runner.stdins == ["body"]
 
 
 def test_publish_gist_edit_uses_existing_id() -> None:
@@ -59,15 +76,18 @@ def test_publish_gist_edit_uses_existing_id() -> None:
     )
 
     assert result == GistResult(url="https://gist.github.com/abc123", gist_id="abc123")
-    assert runner.calls[0][:6] == [
-        "gh",
-        "gist",
-        "edit",
-        "abc123",
-        "--filename",
-        "apt-updates.md",
+    assert runner.calls == [
+        [
+            "gh",
+            "gist",
+            "edit",
+            "abc123",
+            "--filename",
+            "apt-updates.md",
+            "-",
+        ]
     ]
-    assert runner.calls[0][-1].endswith("apt-updates.md")
+    assert runner.stdins == ["body"]
 
 
 def test_publish_gist_create_failure_returns_none() -> None:
