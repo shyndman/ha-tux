@@ -276,5 +276,9 @@ def build_software_update_publisher(
         )
 
     if not managers:
+        LOGGER.error(
+            "No supported package managers found on PATH",
+            expected=[spec.binary for spec in _MANAGER_SPECS],
+        )
         return None
     return SoftwareUpdatePublisher(tuple(managers))

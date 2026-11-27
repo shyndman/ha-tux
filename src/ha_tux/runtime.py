@@ -7,6 +7,7 @@ of every feature active for a role, and isolation of non-MQTT command errors.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from types import TracebackType
@@ -23,11 +24,13 @@ LOGGER = get_logger(LOGGER_NAME)
 INITIAL_RECONNECT_DELAY_SECONDS: Final[float] = 2.0
 MAX_RECONNECT_DELAY_SECONDS: Final[float] = 60.0
 BACKOFF_MULTIPLIER: Final[float] = 2.0
+RECONNECT_ERROR_GRACE_SECONDS: Final[float] = 180.0
 
 _CONNECT_ERRORS: Final[tuple[type[Exception], ...]] = (aiomqtt.MqttError, OSError)
 
 CallbackErrorHandler = Callable[[Exception, aiomqtt.Message], Awaitable[None]]
 SleepFn = Callable[[float], Awaitable[None]]
+MonotonicFn = Callable[[], float]
 
 
 class ManagedSession(SessionLike, Protocol):
@@ -130,6 +133,8 @@ class SessionRuntime:
         host_prefix: str,
         config: HaTuxConfig,
         sleep: SleepFn = asyncio.sleep,
+        monotonic: MonotonicFn = time.monotonic,
+        reconnect_error_grace_seconds: float = RECONNECT_ERROR_GRACE_SECONDS,
     ) -> None:
         """Configure the runtime with its session seam, features, and host metadata."""
         self._session_factory: SessionFactory = session_factory
@@ -139,13 +144,17 @@ class SessionRuntime:
         self._host_prefix: str = host_prefix
         self._config: HaTuxConfig = config
         self._sleep: SleepFn = sleep
+        self._monotonic: MonotonicFn = monotonic
+        self._reconnect_error_grace_seconds: float = reconnect_error_grace_seconds
         self._delay_seconds: float = INITIAL_RECONNECT_DELAY_SECONDS
+        self._disconnect_started_at: float | None = None
 
     async def run(self) -> None:
         """Run the reconnect loop until cancelled, cleanly closed, or fatally failed."""
         feature_names = [feature.name for feature in self._features]
         LOGGER.info("session_runtime_started", features=feature_names)
         self._delay_seconds = INITIAL_RECONNECT_DELAY_SECONDS
+        self._disconnect_started_at = None
 
         while True:
             try:
@@ -155,12 +164,7 @@ class SessionRuntime:
                 raise
             except _TransportReconnectError as reconnect:
                 delay = self._delay_seconds
-                LOGGER.warning(
-                    "session_reconnecting",
-                    delay_seconds=delay,
-                    error=str(reconnect.cause),
-                    error_type=type(reconnect.cause).__name__,
-                )
+                self._log_reconnect_failure(delay=delay, cause=reconnect.cause)
                 await self._sleep(delay)
                 self._delay_seconds = min(
                     delay * BACKOFF_MULTIPLIER, MAX_RECONNECT_DELAY_SECONDS
@@ -172,6 +176,29 @@ class SessionRuntime:
                 LOGGER.info("session_closed_cleanly")
                 return
 
+    def _log_reconnect_failure(self, *, delay: float, cause: Exception) -> None:
+        now = self._monotonic()
+        if self._disconnect_started_at is None:
+            self._disconnect_started_at = now
+
+        elapsed = now - self._disconnect_started_at
+        if elapsed >= self._reconnect_error_grace_seconds:
+            LOGGER.error(
+                "session_reconnecting",
+                delay_seconds=delay,
+                elapsed_seconds=round(elapsed, 1),
+                error=str(cause),
+                error_type=type(cause).__name__,
+            )
+            return
+
+        LOGGER.warning(
+            "session_reconnecting",
+            delay_seconds=delay,
+            error=str(cause),
+            error_type=type(cause).__name__,
+        )
+
     async def _run_once(self) -> None:
         """Open one session and supervise transport alongside all active features."""
         session = self._session_factory(self._on_callback_error)
@@ -180,6 +207,8 @@ class SessionRuntime:
             entered = await session.__aenter__()
         except _CONNECT_ERRORS as error:
             raise _TransportReconnectError(error) from error
+
+        self._disconnect_started_at = None
 
         if self._delay_seconds != INITIAL_RECONNECT_DELAY_SECONDS:
             LOGGER.info(

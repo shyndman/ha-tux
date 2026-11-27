@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 
 import pytest
+from structlog.testing import capture_logs
 
 from ha_tux.dbus import watch_name
 from tests.fakes import FakeNameOwnerSource
@@ -229,5 +230,194 @@ def test_watch_name_propagates_on_present_exception_immediately() -> None:
                 ),
                 timeout=2,
             )
+
+    asyncio.run(scenario())
+
+
+def test_watch_name_logs_error_when_absent_at_startup_past_grace() -> None:
+    async def scenario() -> None:
+        source = FakeNameOwnerSource(initially_present=False)
+        release_sleep = asyncio.Event()
+        sleep_durations: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_durations.append(seconds)
+            _ = await release_sleep.wait()
+
+        async def on_present() -> None:
+            _ = await asyncio.Event().wait()
+
+        async def on_absent() -> None:
+            pass
+
+        with capture_logs() as logs:
+            task = asyncio.create_task(
+                watch_name(
+                    source=source,
+                    service_name=SERVICE,
+                    on_present=on_present,
+                    on_absent=on_absent,
+                    absence_grace_seconds=180.0,
+                    sleep=fake_sleep,
+                )
+            )
+            await asyncio.sleep(0)
+            assert [e for e in logs if e.get("log_level") == "error"] == []
+
+            release_sleep.set()
+            await asyncio.sleep(0)
+
+            await source.close()
+            await asyncio.wait_for(task, timeout=2)
+
+        assert sleep_durations == [180.0]
+        error_logs = [e for e in logs if e.get("log_level") == "error"]
+        assert len(error_logs) == 1
+        assert error_logs[0]["service_name"] == SERVICE
+        assert error_logs[0]["grace_seconds"] == 180.0
+
+    asyncio.run(scenario())
+
+
+def test_watch_name_cancels_startup_grace_timer_when_owner_appears() -> None:
+    async def scenario() -> None:
+        source = FakeNameOwnerSource(initially_present=False)
+        timer_cancelled = asyncio.Event()
+        attached = asyncio.Event()
+
+        async def fake_sleep(seconds: float) -> None:
+            del seconds
+            try:
+                _ = await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                timer_cancelled.set()
+                raise
+
+        async def on_present() -> None:
+            attached.set()
+            _ = await asyncio.Event().wait()
+
+        async def on_absent() -> None:
+            pass
+
+        with capture_logs() as logs:
+            task = asyncio.create_task(
+                watch_name(
+                    source=source,
+                    service_name=SERVICE,
+                    on_present=on_present,
+                    on_absent=on_absent,
+                    absence_grace_seconds=180.0,
+                    sleep=fake_sleep,
+                )
+            )
+            await asyncio.sleep(0)
+            await source.emit(SERVICE, "", ":1.10")
+            _ = await asyncio.wait_for(timer_cancelled.wait(), timeout=2)
+            _ = await asyncio.wait_for(attached.wait(), timeout=2)
+
+            _ = task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+        assert [e for e in logs if e.get("log_level") == "error"] == []
+
+    asyncio.run(scenario())
+
+
+def test_watch_name_cancels_loss_grace_timer_when_owner_returns() -> None:
+    async def scenario() -> None:
+        source = FakeNameOwnerSource(initially_present=True)
+        timer_cancelled = asyncio.Event()
+        attached = asyncio.Event()
+
+        async def fake_sleep(seconds: float) -> None:
+            del seconds
+            try:
+                _ = await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                timer_cancelled.set()
+                raise
+
+        async def on_present() -> None:
+            attached.set()
+            _ = await asyncio.Event().wait()
+
+        async def on_absent() -> None:
+            pass
+
+        with capture_logs() as logs:
+            task = asyncio.create_task(
+                watch_name(
+                    source=source,
+                    service_name=SERVICE,
+                    on_present=on_present,
+                    on_absent=on_absent,
+                    absence_grace_seconds=180.0,
+                    sleep=fake_sleep,
+                )
+            )
+            _ = await asyncio.wait_for(attached.wait(), timeout=2)
+            attached.clear()
+
+            await source.emit(SERVICE, ":1.1", "")
+            await asyncio.sleep(0)
+
+            await source.emit(SERVICE, "", ":1.2")
+            _ = await asyncio.wait_for(timer_cancelled.wait(), timeout=2)
+            _ = await asyncio.wait_for(attached.wait(), timeout=2)
+
+            _ = task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+        assert [e for e in logs if e.get("log_level") == "error"] == []
+
+    asyncio.run(scenario())
+
+
+def test_watch_name_logs_error_when_owner_lost_past_grace() -> None:
+    async def scenario() -> None:
+        source = FakeNameOwnerSource(initially_present=True)
+        release_sleep = asyncio.Event()
+        attached = asyncio.Event()
+
+        async def fake_sleep(seconds: float) -> None:
+            del seconds
+            _ = await release_sleep.wait()
+
+        async def on_present() -> None:
+            attached.set()
+            _ = await asyncio.Event().wait()
+
+        async def on_absent() -> None:
+            pass
+
+        with capture_logs() as logs:
+            task = asyncio.create_task(
+                watch_name(
+                    source=source,
+                    service_name=SERVICE,
+                    on_present=on_present,
+                    on_absent=on_absent,
+                    absence_grace_seconds=180.0,
+                    sleep=fake_sleep,
+                )
+            )
+            _ = await asyncio.wait_for(attached.wait(), timeout=2)
+
+            await source.emit(SERVICE, ":1.1", "")
+            await asyncio.sleep(0)
+            assert [e for e in logs if e.get("log_level") == "error"] == []
+
+            release_sleep.set()
+            await asyncio.sleep(0)
+
+            await source.close()
+            await asyncio.wait_for(task, timeout=2)
+
+        error_logs = [e for e in logs if e.get("log_level") == "error"]
+        assert len(error_logs) == 1
+        assert error_logs[0]["service_name"] == SERVICE
 
     asyncio.run(scenario())

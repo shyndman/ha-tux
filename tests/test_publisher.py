@@ -8,10 +8,14 @@ from pathlib import Path
 from typing import cast
 
 from ha_mqtt_discoverable import DeviceInfo
+from structlog.testing import capture_logs
 
 from ha_tux.foundation.subprocesses import CommandResult
 from ha_tux.software_update.detect import PackageUpdate, UpdateReport
-from ha_tux.software_update.publisher import ManagerPublisher
+from ha_tux.software_update.publisher import (
+    ManagerPublisher,
+    build_software_update_publisher,
+)
 from ha_tux.software_update.state import StateStore
 from tests.fakes import InMemorySession
 
@@ -248,3 +252,24 @@ def test_install_command_via_mqtt_marks_in_progress_then_resolves(
     assert states[1]["title"] == "homebrew: Up to date"
     assert states[1]["installed_version"] == "2026-06-25"
     assert states[1]["latest_version"] == "2026-06-25"
+
+
+def test_build_software_update_publisher_logs_error_when_no_managers_found(
+    tmp_path: Path,
+) -> None:
+    session = InMemorySession()
+    store = StateStore.load(tmp_path / "state.toml")
+
+    with capture_logs() as logs:
+        publisher = build_software_update_publisher(
+            session,
+            DEVICE,
+            "host",
+            store,
+            which=lambda _name: None,
+        )
+
+    assert publisher is None
+    error_logs = [entry for entry in logs if entry.get("log_level") == "error"]
+    assert len(error_logs) == 1
+    assert error_logs[0]["expected"] == ["apt-get", "brew"]

@@ -41,7 +41,7 @@ async def _create_gist(
         stdin=body,
     )
     if result.returncode != 0:
-        LOGGER.info(
+        LOGGER.error(
             "Failed to create update summary gist",
             manager=manager,
             error=result.stderr.strip(),
@@ -50,7 +50,7 @@ async def _create_gist(
 
     match = _GIST_URL_PATTERN.search(result.stdout)
     if match is None:
-        LOGGER.info(
+        LOGGER.error(
             "GitHub CLI did not return a gist URL",
             manager=manager,
             output=result.stdout.strip(),
@@ -73,7 +73,7 @@ async def _edit_gist(
         stdin=body,
     )
     if result.returncode != 0:
-        LOGGER.info(
+        LOGGER.error(
             "Failed to update existing gist",
             manager=manager,
             gist_id=gist_id,
@@ -112,7 +112,7 @@ async def publish_gist(
             runner=runner,
         )
     except Exception as error:
-        LOGGER.info(
+        LOGGER.error(
             "Unexpected error while publishing update gist",
             manager=manager,
             error=str(error),
@@ -133,7 +133,7 @@ async def chhoto_site_url(*, runner: CommandRunner = subprocess_runner) -> str |
 
         return match.group(1)
     except Exception as error:
-        LOGGER.info("Failed to read chhoto configuration", error=str(error))
+        LOGGER.error("Failed to read chhoto configuration", error=str(error))
         return None
 
 
@@ -156,7 +156,7 @@ async def publish_shortlink(
             _ = await runner(["chhoto", "delete", slug])
             result = await runner(["chhoto", "new", gist_url, slug])
             if result.returncode != 0:
-                LOGGER.info(
+                LOGGER.error(
                     "Failed to create chhoto shortlink after retry",
                     slug=slug,
                     error=result.stderr.strip(),
@@ -165,7 +165,7 @@ async def publish_shortlink(
 
         return f"{base}/{slug}"
     except Exception as error:
-        LOGGER.info(
+        LOGGER.error(
             "Unexpected error while publishing chhoto shortlink",
             slug=slug,
             error=str(error),
