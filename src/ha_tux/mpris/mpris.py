@@ -11,8 +11,6 @@ from sdbus import (
 )
 
 MPRIS_OBJECT_PATH: Final = "/org/mpris/MediaPlayer2"
-DBUS_DAEMON_SERVICE_NAME: Final = "org.freedesktop.DBus"
-DBUS_DAEMON_OBJECT_PATH: Final = "/org/freedesktop/DBus"
 PLAYERCTLD_SERVICE_NAME: Final = "org.mpris.MediaPlayer2.playerctld"
 PLAYERCTLD_NO_ACTIVE_PLAYER_ERROR: Final = (
     "com.github.altdesktop.playerctld.NoActivePlayer"
@@ -31,7 +29,6 @@ ToggleAction = Literal["Pause", "Play"]
 Variant = tuple[str, object]
 MetadataMap = Mapping[str, Variant]
 PropertiesChanged = tuple[str, dict[str, Variant], list[str]]
-NameOwnerChanged = tuple[str, str, str]
 SupportedImageMimeType = Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
 
 
@@ -157,28 +154,10 @@ class MprisPlayerAsync(
         raise NotImplementedError
 
 
-class DbusDaemonAsync(
-    DbusInterfaceCommonAsync,
-    interface_name=DBUS_DAEMON_SERVICE_NAME,
-):
-    @dbus_method_async("s", "b", method_name="NameHasOwner")
-    async def name_has_owner(self, name: str) -> bool:
-        del name
-        raise NotImplementedError
-
-    @dbus_signal_async("sss", signal_name="NameOwnerChanged")
-    def name_owner_changed(self) -> NameOwnerChanged:
-        raise NotImplementedError
-
-
 def new_mpris_player_proxy(
     service_name: str = PLAYERCTLD_SERVICE_NAME,
 ) -> MprisPlayerAsync:
     return MprisPlayerAsync.new_proxy(service_name, MPRIS_OBJECT_PATH)
-
-
-def new_dbus_daemon_proxy() -> DbusDaemonAsync:
-    return DbusDaemonAsync.new_proxy(DBUS_DAEMON_SERVICE_NAME, DBUS_DAEMON_OBJECT_PATH)
 
 
 async def get_player_async(
