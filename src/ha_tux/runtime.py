@@ -1,3 +1,9 @@
+"""Session Runtime for supervising an MQTT session and its active features.
+
+Owns connection retries with bounded exponential backoff, concurrent execution
+of every feature active for a role, and isolation of non-MQTT command errors.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,22 +31,32 @@ SleepFn = Callable[[float], Awaitable[None]]
 
 
 class ManagedSession(SessionLike, Protocol):
-    async def __aenter__(self) -> ManagedSession: ...
+    """Runtime-facing seam for a supervisable MQTT session adapter."""
+
+    async def __aenter__(self) -> ManagedSession:
+        """Connect to the broker and publish the session's online status."""
+        ...
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
-    ) -> None: ...
+    ) -> None:
+        """Drain background tasks, publish offline status, and disconnect."""
+        ...
 
-    async def wait_closed(self) -> None: ...
+    async def wait_closed(self) -> None:
+        """Block until clean shutdown or raise immediately on transport failure."""
+        ...
 
 
 SessionFactory = Callable[[CallbackErrorHandler], ManagedSession]
 
 
 def mqtt_session_factory(settings: Settings.MQTT) -> SessionFactory:
+    """Build a factory that opens live ``MqttSession`` instances with ``settings``."""
+
     def create(on_callback_error: CallbackErrorHandler) -> ManagedSession:
         return MqttSession(settings, on_callback_error=on_callback_error)
 
@@ -49,6 +65,8 @@ def mqtt_session_factory(settings: Settings.MQTT) -> SessionFactory:
 
 @dataclass(frozen=True, slots=True)
 class SessionContext:
+    """Per-session dependencies handed to each active feature's ``run`` coroutine."""
+
     session: SessionLike
     device: DeviceInfo
     hostname: str
@@ -61,6 +79,8 @@ FeatureRun = Callable[[SessionContext], Coroutine[object, object, None]]
 
 @dataclass(frozen=True, slots=True)
 class Feature:
+    """Descriptor binding a feature's name and active roles to its lifecycle coroutine."""
+
     name: str
     roles: frozenset[Role]
     run: FeatureRun
@@ -73,7 +93,10 @@ async def run_poller(
     poll: Callable[[], Awaitable[None]],
     sleep: SleepFn = asyncio.sleep,
 ) -> None:
-    """Invoke ``poll`` immediately, then repeat on a fixed interval."""
+    """Invoke ``poll`` immediately, then repeat on a fixed interval.
+
+    Logs and re-raises any failing iteration so the supervising runtime unwinds.
+    """
     LOGGER.debug("poller_started", poller=name, interval_seconds=interval_seconds)
 
     while True:
@@ -108,6 +131,7 @@ class SessionRuntime:
         config: HaTuxConfig,
         sleep: SleepFn = asyncio.sleep,
     ) -> None:
+        """Configure the runtime with its session seam, features, and host metadata."""
         self._session_factory: SessionFactory = session_factory
         self._features: tuple[Feature, ...] = tuple(features)
         self._device: DeviceInfo = device
@@ -118,6 +142,7 @@ class SessionRuntime:
         self._delay_seconds: float = INITIAL_RECONNECT_DELAY_SECONDS
 
     async def run(self) -> None:
+        """Run the reconnect loop until cancelled, cleanly closed, or fatally failed."""
         feature_names = [feature.name for feature in self._features]
         LOGGER.info("session_runtime_started", features=feature_names)
         self._delay_seconds = INITIAL_RECONNECT_DELAY_SECONDS
@@ -148,6 +173,7 @@ class SessionRuntime:
                 return
 
     async def _run_once(self) -> None:
+        """Open one session and supervise transport alongside all active features."""
         session = self._session_factory(self._on_callback_error)
 
         try:
@@ -198,6 +224,7 @@ class SessionRuntime:
     async def _on_callback_error(
         self, error: Exception, message: aiomqtt.Message
     ) -> None:
+        """Isolate non-MQTT command callback errors; propagate ``MqttError`` to reconnect."""
         topic = str(message.topic)
 
         if isinstance(error, aiomqtt.MqttError):
@@ -218,12 +245,16 @@ class SessionRuntime:
 
 
 class _TransportReconnectError(Exception):
+    """Internal signal separating recoverable transport failures from fatal crashes."""
+
     def __init__(self, cause: Exception) -> None:
+        """Wrap the underlying transport exception that triggered a reconnect."""
         super().__init__(str(cause))
         self.cause: Exception = cause
 
 
 def _extract_mqtt_error(error: BaseException) -> Exception | None:
+    """Return ``error`` if every leaf exception is an ``aiomqtt.MqttError``."""
     if isinstance(error, aiomqtt.MqttError):
         return error
 
