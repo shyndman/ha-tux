@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import final
 
+from structlog.testing import capture_logs
+
 from ha_tux.foundation.subprocesses import CommandResult
 from ha_tux.software_update.gist import GistResult, publish_gist, publish_shortlink
 
@@ -90,11 +92,11 @@ def test_publish_gist_edit_uses_existing_id() -> None:
     assert runner.stdins == ["body"]
 
 
-def test_publish_gist_create_failure_returns_none() -> None:
+def test_publish_gist_create_failure_returns_none_and_logs_error() -> None:
     runner = _Recorder([CommandResult(1, "", "boom")])
 
-    assert (
-        asyncio.run(
+    with capture_logs() as logs:
+        result = asyncio.run(
             publish_gist(
                 manager="apt",
                 body="body",
@@ -103,8 +105,11 @@ def test_publish_gist_create_failure_returns_none() -> None:
                 runner=runner,
             )
         )
-        is None
-    )
+
+    assert result is None
+    error_logs = [entry for entry in logs if entry.get("log_level") == "error"]
+    assert len(error_logs) == 1
+    assert error_logs[0]["error"] == "boom"
 
 
 def test_publish_shortlink_returns_persisted_without_run() -> None:
@@ -177,3 +182,55 @@ def test_publish_shortlink_retries_after_delete() -> None:
         "https://gist.github.com/abc123",
         "slug",
     ]
+
+
+def test_publish_shortlink_retry_failure_logs_error() -> None:
+    runner = _Recorder(
+        [
+            CommandResult(0, "Site URL: https://go.don.haus\n", ""),
+            CommandResult(1, "", "exists"),
+            CommandResult(0, "", ""),
+            CommandResult(1, "", "still failing"),
+        ]
+    )
+
+    with capture_logs() as logs:
+        url = asyncio.run(
+            publish_shortlink(
+                slug="slug",
+                gist_url="https://gist.github.com/abc123",
+                existing_short_url=None,
+                runner=runner,
+            )
+        )
+
+    assert url is None
+    error_logs = [entry for entry in logs if entry.get("log_level") == "error"]
+    assert len(error_logs) == 1
+    assert error_logs[0]["error"] == "still failing"
+
+
+def test_publish_shortlink_exception_logs_error() -> None:
+    async def raising_runner(
+        cmd: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        stdin: str | None = None,
+    ) -> CommandResult:
+        del cmd, env, stdin
+        raise FileNotFoundError("chhoto missing")
+
+    with capture_logs() as logs:
+        url = asyncio.run(
+            publish_shortlink(
+                slug="slug",
+                gist_url="https://gist.github.com/abc123",
+                existing_short_url=None,
+                runner=raising_runner,
+            )
+        )
+
+    assert url is None
+    error_logs = [entry for entry in logs if entry.get("log_level") == "error"]
+    assert len(error_logs) >= 1
+    assert any("chhoto missing" in str(entry.get("error")) for entry in error_logs)

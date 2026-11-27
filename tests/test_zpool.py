@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+from structlog.testing import capture_logs
+
+import ha_tux.zfs.zpool as zpool_module
 from ha_tux.zfs.zpool import (
     PoolSnapshots,
     ZpoolStatus,
+    discover_pool_names,
     parse_pool_snapshots,
     parse_zpool_statuses,
 )
@@ -162,3 +169,21 @@ def test_parse_pool_snapshots_skips_bad_lines_without_dropping_pool() -> None:
     assert parse_pool_snapshots(output) == {
         "rpool": PoolSnapshots(count=2, latest_epoch=200),
     }
+
+
+def test_discover_pool_names_logs_error_when_zpool_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def failing_read() -> tuple[ZpoolStatus, ...]:
+        raise FileNotFoundError("zpool not found")
+
+    monkeypatch.setattr(zpool_module, "read_zpool_statuses", failing_read)
+
+    with capture_logs() as logs:
+        names = asyncio.run(discover_pool_names())
+
+    assert names == ()
+    error_logs = [entry for entry in logs if entry.get("log_level") == "error"]
+    assert len(error_logs) == 1
+    assert error_logs[0]["event"] == "zfs_pool_discovery_failed"
+    assert error_logs[0]["error"] == "zpool not found"

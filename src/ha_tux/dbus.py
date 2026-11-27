@@ -17,6 +17,7 @@ from collections.abc import (
     Coroutine,
 )
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, closing
+from dataclasses import dataclass
 from typing import Final, Protocol, cast
 
 from libsh import get_logger
@@ -34,10 +35,23 @@ LOGGER = get_logger(__name__)
 DBUS_DAEMON_SERVICE_NAME: Final = "org.freedesktop.DBus"
 DBUS_DAEMON_OBJECT_PATH: Final = "/org/freedesktop/DBus"
 NAME_OWNER_CHANGED_SIGNAL: Final = "NameOwnerChanged"
+ABSENCE_GRACE_SECONDS: Final[float] = 180.0
 
 NameOwnerChanged = tuple[str, str, str]
 OnPresent = Callable[[], Coroutine[object, object, None]]
 OnAbsent = Callable[[], Awaitable[None]]
+SleepFn = Callable[[float], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class _WatchTarget:
+    """Target D-Bus name, lifecycle callbacks, and absence grace policy."""
+
+    service_name: str
+    on_present: OnPresent
+    on_absent: OnAbsent
+    absence_grace_seconds: float
+    sleep: SleepFn
 
 
 class NameOwnerSource(Protocol):
@@ -99,37 +113,56 @@ def system_name_owner_source() -> NameOwnerSource:
     return SdbusNameOwnerSource(sd_bus_open_system())
 
 
+def _start_absence_timer(target: _WatchTarget) -> asyncio.Task[None]:
+    """Start a one-shot timer that logs an error if ``service_name`` stays unowned."""
+
+    async def wait_and_log() -> None:
+        await target.sleep(target.absence_grace_seconds)
+        LOGGER.error(
+            "Required D-Bus service has no owner after grace window",
+            service_name=target.service_name,
+            grace_seconds=target.absence_grace_seconds,
+        )
+
+    return asyncio.create_task(
+        wait_and_log(), name=f"dbus_absence_grace:{target.service_name}"
+    )
+
+
 async def _apply_owner_change(
     *,
-    service_name: str,
+    target: _WatchTarget,
     old_owner: str,
     new_owner: str,
     active_task: asyncio.Task[None] | None,
-    on_present: OnPresent,
-    on_absent: OnAbsent,
-) -> asyncio.Task[None] | None:
-    """Apply a ``NameOwnerChanged`` transition and return the updated attachment task."""
+    absence_timer: asyncio.Task[None] | None,
+) -> tuple[asyncio.Task[None] | None, asyncio.Task[None] | None]:
+    """Apply a ``NameOwnerChanged`` transition and return active and grace tasks."""
+    await cancel_task(absence_timer)
+    await cancel_task(active_task)
+
     if new_owner == "":
         LOGGER.info(
             "D-Bus name owner lost",
-            service_name=service_name,
+            service_name=target.service_name,
             old_owner=old_owner,
         )
-        await cancel_task(active_task)
-        await on_absent()
-        return None
+        await target.on_absent()
+        return None, _start_absence_timer(target)
 
     message = (
         "D-Bus name owner acquired" if old_owner == "" else "D-Bus name owner replaced"
     )
     LOGGER.info(
         message,
-        service_name=service_name,
+        service_name=target.service_name,
         old_owner=old_owner,
         new_owner=new_owner,
     )
-    await cancel_task(active_task)
-    return asyncio.create_task(on_present(), name=f"dbus:{service_name}")
+    next_task = asyncio.create_task(
+        target.on_present(), name=f"dbus:{target.service_name}"
+    )
+    return next_task, None
 
 
 def _reap_attachment(
@@ -169,29 +202,18 @@ async def _wait_for_race(
 async def _consume_events(
     *,
     changes: AsyncIterator[NameOwnerChanged],
-    service_name: str,
+    target: _WatchTarget,
     active_task: asyncio.Task[None] | None,
-    on_present: OnPresent,
-    on_absent: OnAbsent,
+    absence_timer: asyncio.Task[None] | None,
 ) -> None:
-    """Coordinate the D-Bus ownership signal stream alongside the active attachment task.
+    """Coordinate D-Bus ownership signals alongside active and grace tasks.
 
-    Two concurrent systems run independently while a D-Bus name is watched:
-
-    1. The D-Bus daemon's ``NameOwnerChanged`` signal stream (``next_signal``), which
-       wakes whenever any bus name is acquired, replaced, or dropped.
-    2. The feature's active attachment task (``active_task``, running ``on_present()``),
-       which holds D-Bus watches/proxies and publishes state to Home Assistant.
-
-    A plain ``async for`` loop over ``changes`` would block waiting on D-Bus signals and
-    leave an unhandled exception from ``active_task`` (for instance an ``aiomqtt.MqttError``
-    when the broker drops) undetected until some unrelated bus name changed. Racing both
-    tasks with ``asyncio.wait(..., return_when=FIRST_COMPLETED)`` lets either system wake
-    this loop immediately: attachment crashes re-raise right away to unwind Session
-    Runtime, while signal arrivals tear down and re-create the attachment as ownership
-    transitions.
+    Racing ``next_signal`` and ``active_task`` via ``asyncio.wait`` ensures an
+    unhandled attachment exception (such as ``aiomqtt.MqttError``) unwinds
+    immediately instead of blocking behind the D-Bus signal stream, while
+    ownership signals cancel and recreate the attachment and grace timer.
     """
-    signal_task_name = f"dbus_signal:{service_name}"
+    signal_task_name = f"dbus_signal:{target.service_name}"
     next_signal: asyncio.Task[NameOwnerChanged] | None = None
 
     try:
@@ -199,26 +221,28 @@ async def _consume_events(
 
         while True:
             signal_ready, active_task = await _wait_for_race(
-                next_signal, active_task, service_name
+                next_signal, active_task, target.service_name
             )
             if not signal_ready:
                 continue
 
             changed_name, old_owner, new_owner = next_signal.result()
             next_signal = schedule_next(changes, name=signal_task_name)
-            if changed_name == service_name:
-                active_task = await _apply_owner_change(
-                    service_name=service_name,
+            if changed_name == target.service_name:
+                active_task, absence_timer = await _apply_owner_change(
+                    target=target,
                     old_owner=old_owner,
                     new_owner=new_owner,
                     active_task=active_task,
-                    on_present=on_present,
-                    on_absent=on_absent,
+                    absence_timer=absence_timer,
                 )
     except StopAsyncIteration:
-        LOGGER.debug("D-Bus name-owner signal stream ended", service_name=service_name)
+        LOGGER.debug(
+            "D-Bus name-owner signal stream ended", service_name=target.service_name
+        )
     finally:
         await cancel_task(next_signal)
+        await cancel_task(absence_timer)
         await cancel_task(active_task)
 
 
@@ -228,15 +252,27 @@ async def watch_name(
     service_name: str,
     on_present: OnPresent,
     on_absent: OnAbsent,
+    absence_grace_seconds: float = ABSENCE_GRACE_SECONDS,
+    sleep: SleepFn = asyncio.sleep,
 ) -> None:
     """Track ``service_name`` ownership and run ``on_present`` while it is owned.
 
     Subscribes to ``NameOwnerChanged`` before calling ``NameHasOwner`` so transitions
-    around startup are never dropped. Unhandled exceptions raised by ``on_present``
-    propagate immediately to the caller.
+    around startup are never dropped. Logs an error if ``service_name`` remains
+    unowned past ``absence_grace_seconds``. Unhandled exceptions raised by
+    ``on_present`` propagate immediately to the caller.
     """
+    target = _WatchTarget(
+        service_name=service_name,
+        on_present=on_present,
+        on_absent=on_absent,
+        absence_grace_seconds=absence_grace_seconds,
+        sleep=sleep,
+    )
+
     async with source.open_name_owner_changes() as changes:
         active_task: asyncio.Task[None] | None = None
+        absence_timer: asyncio.Task[None] | None = None
 
         if await source.name_has_owner(service_name):
             LOGGER.info(
@@ -246,11 +282,11 @@ async def watch_name(
         else:
             LOGGER.info("D-Bus name has no owner at startup", service_name=service_name)
             await on_absent()
+            absence_timer = _start_absence_timer(target)
 
         await _consume_events(
             changes=changes,
-            service_name=service_name,
+            target=target,
             active_task=active_task,
-            on_present=on_present,
-            on_absent=on_absent,
+            absence_timer=absence_timer,
         )

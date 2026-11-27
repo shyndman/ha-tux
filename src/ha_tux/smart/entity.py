@@ -120,7 +120,7 @@ def build_smart_publisher(
     try:
         drives = read_smart_reports(report_path)
     except (FileNotFoundError, json.JSONDecodeError, ValidationError):
-        LOGGER.warning("smart_report_unavailable")
+        LOGGER.error("smart_report_unavailable", extra={"path": str(report_path)})
         drives = {}
     sensors_by_serial: dict[str, _DriveSensors] = {}
     for serial, drive in drives.items():

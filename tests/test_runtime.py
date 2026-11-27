@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import suppress
 
 import aiomqtt
 import pytest
 from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable.sensors import Button, ButtonInfo
+from structlog.testing import capture_logs
 
 from ha_tux.config import HaTuxConfig
 from ha_tux.runtime import (
     CallbackErrorHandler,
     Feature,
     ManagedSession,
+    MonotonicFn,
+    RECONNECT_ERROR_GRACE_SECONDS,
     SessionContext,
     SessionRuntime,
+    SleepFn,
     run_poller,
 )
 from tests.fakes import InMemorySession
@@ -29,6 +34,9 @@ def _make_runtime(
     features: list[Feature],
     connect_errors: list[Exception | None] | None = None,
     delays: list[float] | None = None,
+    sleep: SleepFn | None = None,
+    monotonic: MonotonicFn = time.monotonic,
+    reconnect_error_grace_seconds: float = RECONNECT_ERROR_GRACE_SECONDS,
 ) -> SessionRuntime:
     planned_errors = list(connect_errors or [])
     recorded_delays = delays if delays is not None else []
@@ -44,7 +52,10 @@ def _make_runtime(
 
     async def fake_sleep(seconds: float) -> None:
         recorded_delays.append(seconds)
-        await asyncio.sleep(0)
+        if sleep is not None:
+            await sleep(seconds)
+        else:
+            await asyncio.sleep(0)
 
     return SessionRuntime(
         session_factory=factory,
@@ -54,6 +65,8 @@ def _make_runtime(
         host_prefix="testbox",
         config=TEST_CONFIG,
         sleep=fake_sleep,
+        monotonic=monotonic,
+        reconnect_error_grace_seconds=reconnect_error_grace_seconds,
     )
 
 
@@ -330,5 +343,78 @@ def test_run_poller_executes_immediately_repeats_and_propagates_failure() -> Non
 
         assert calls == 3
         assert sleeps == [15.0, 15.0]
+
+    asyncio.run(scenario())
+
+
+def test_reconnect_logs_warning_within_grace_then_error_and_resets_on_connect() -> None:
+    async def scenario() -> None:
+        sessions: list[InMemorySession] = []
+        now = 100.0
+        connected = asyncio.Event()
+
+        async def advance_clock(seconds: float) -> None:
+            nonlocal now
+            now += seconds
+            await asyncio.sleep(0)
+
+        async def feature(_ctx: SessionContext) -> None:
+            connected.set()
+            _ = await asyncio.Event().wait()
+
+        # Delays across failures: 2 + 4 + 8 + 16 + 32 + 60 + 60 = 182s.
+        # Attempts 1-6 happen at elapsed 0, 2, 6, 14, 30, 62, 122 (< 180s -> warning).
+        # Attempt 8 happens at elapsed 182s (>= 180s -> error).
+        connect_errors: list[Exception | None] = [
+            aiomqtt.MqttError("err 1"),
+            aiomqtt.MqttError("err 2"),
+            aiomqtt.MqttError("err 3"),
+            aiomqtt.MqttError("err 4"),
+            aiomqtt.MqttError("err 5"),
+            aiomqtt.MqttError("err 6"),
+            aiomqtt.MqttError("err 7"),
+            aiomqtt.MqttError("err 8"),
+            None,
+            aiomqtt.MqttError("post-connect err"),
+            None,
+        ]
+        runtime = _make_runtime(
+            sessions=sessions,
+            features=[Feature("f", frozenset({"all"}), feature)],
+            connect_errors=connect_errors,
+            sleep=advance_clock,
+            monotonic=lambda: now,
+            reconnect_error_grace_seconds=180.0,
+        )
+
+        with capture_logs() as logs:
+            task = asyncio.create_task(runtime.run())
+            _ = await asyncio.wait_for(connected.wait(), timeout=2)
+            connected.clear()
+
+            # Drop clean session; next failure should be warning again, not error.
+            sessions[-1].fail_transport(aiomqtt.MqttError("dropped"))
+            _ = await asyncio.wait_for(connected.wait(), timeout=2)
+
+            _ = task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+        reconnect_logs = [
+            entry for entry in logs if entry.get("event") == "session_reconnecting"
+        ]
+        assert [entry.get("log_level") for entry in reconnect_logs] == [
+            "warning",
+            "warning",
+            "warning",
+            "warning",
+            "warning",
+            "warning",
+            "warning",
+            "error",
+            "warning",
+            "warning",
+        ]
+        assert reconnect_logs[7]["elapsed_seconds"] == 182.0
 
     asyncio.run(scenario())
