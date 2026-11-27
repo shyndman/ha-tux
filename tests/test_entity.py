@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pytest import MonkeyPatch
 
-import ha_tux.mpris.entity as ha_mpris_module
+import ha_tux.mpris.bridge as ha_mpris_module
 from ha_mqtt_discoverable import DeviceInfo
-from ha_tux.mpris.entity import (
+from ha_tux.mpris.bridge import (
     HA_TUX_MEDIA_DEVICE_CLASS,
     HA_TUX_MEDIA_NAME,
     HA_TUX_MEDIA_OBJECT_ID,
