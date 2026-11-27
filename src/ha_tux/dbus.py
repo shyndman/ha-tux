@@ -16,12 +16,7 @@ from collections.abc import (
     Callable,
     Coroutine,
 )
-from contextlib import (
-    AbstractAsyncContextManager,
-    asynccontextmanager,
-    closing,
-    suppress,
-)
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, closing
 from typing import Final, Protocol, cast
 
 from libsh import get_logger
@@ -33,6 +28,8 @@ from sdbus import (
     sd_bus_open_system,
 )
 from sdbus.sd_bus_internals import SdBus, SdBusMessage
+
+from ha_tux.foundation.tasks import cancel_task, schedule_next
 
 LOGGER = get_logger(__name__)
 
@@ -52,9 +49,8 @@ class DbusDaemonAsync(
     """Proxy for org.freedesktop.DBus ownership queries and change signals."""
 
     @dbus_method_async("s", "b", method_name="NameHasOwner")
-    async def name_has_owner(self, name: str) -> bool:
-        """Return whether ``name`` currently has an active bus owner."""
-        del name
+    async def name_has_owner(self, _name: str) -> bool:
+        """Return whether ``_name`` currently has an active bus owner."""
         raise NotImplementedError
 
     @dbus_signal_async("sss", signal_name=NAME_OWNER_CHANGED_SIGNAL)
@@ -132,18 +128,6 @@ def system_name_owner_source() -> NameOwnerSource:
     return SdbusNameOwnerSource(sd_bus_open_system())
 
 
-async def _cancel_task(task: asyncio.Task[object] | None) -> None:
-    """Cancel ``task`` if running and wait until it settles."""
-    if task is None:
-        return
-
-    if not task.done():
-        _ = task.cancel()
-
-    with suppress(asyncio.CancelledError, StopAsyncIteration):
-        await task
-
-
 async def _apply_owner_change(
     *,
     service_name: str,
@@ -156,36 +140,59 @@ async def _apply_owner_change(
     """Apply a ``NameOwnerChanged`` transition and return the updated attachment task."""
     if new_owner == "":
         LOGGER.info(
-            "dbus_name_owner_lost",
+            "D-Bus name owner lost",
             service_name=service_name,
             old_owner=old_owner,
         )
-        await _cancel_task(active_task)
+        await cancel_task(active_task)
         await on_absent()
         return None
 
-    event = (
-        "dbus_name_owner_acquired" if old_owner == "" else "dbus_name_owner_replaced"
+    message = (
+        "D-Bus name owner acquired" if old_owner == "" else "D-Bus name owner replaced"
     )
     LOGGER.info(
-        event,
+        message,
         service_name=service_name,
         old_owner=old_owner,
         new_owner=new_owner,
     )
-    await _cancel_task(active_task)
+    await cancel_task(active_task)
     return asyncio.create_task(on_present(), name=f"dbus:{service_name}")
 
 
-def _schedule_signal(
-    changes: AsyncIterator[NameOwnerChanged], service_name: str
-) -> asyncio.Task[NameOwnerChanged]:
-    """Schedule the next ``NameOwnerChanged`` read task."""
+def _reap_attachment(
+    active_task: asyncio.Task[None] | None,
+    done: set[asyncio.Task[object]],
+    service_name: str,
+) -> asyncio.Task[None] | None:
+    """Propagate failures if the active attachment finished; retain it if still running."""
+    if active_task is None or active_task not in done:
+        return active_task
 
-    async def read_next() -> NameOwnerChanged:
-        return await anext(changes)
+    # Propagate unhandled feature/transport exceptions (such as MqttError) immediately
+    # instead of letting them sit unobserved until the next ownership signal; passive
+    # features that return cleanly remain watched until the owner drops.
+    active_task.result()
+    LOGGER.debug(
+        "D-Bus name attachment finished cleanly; continuing to watch ownership",
+        service_name=service_name,
+    )
+    return None
 
-    return asyncio.create_task(read_next(), name=f"dbus_signal:{service_name}")
+
+async def _wait_for_race(
+    next_signal: asyncio.Task[NameOwnerChanged],
+    active_task: asyncio.Task[None] | None,
+    service_name: str,
+) -> tuple[bool, asyncio.Task[None] | None]:
+    """Wait until either the signal read or active attachment settles."""
+    waiters: list[asyncio.Task[object]] = (
+        [next_signal, active_task] if active_task is not None else [next_signal]
+    )
+    done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+    updated_active = _reap_attachment(active_task, done, service_name)
+    return next_signal in done, updated_active
 
 
 async def _consume_events(
@@ -196,51 +203,52 @@ async def _consume_events(
     on_present: OnPresent,
     on_absent: OnAbsent,
 ) -> None:
-    """Race incoming ownership signals against the active attachment task."""
+    """Coordinate the D-Bus ownership signal stream alongside the active attachment task.
+
+    Two concurrent systems run independently while a D-Bus name is watched:
+
+    1. The D-Bus daemon's ``NameOwnerChanged`` signal stream (``next_signal``), which
+       wakes whenever any bus name is acquired, replaced, or dropped.
+    2. The feature's active attachment task (``active_task``, running ``on_present()``),
+       which holds D-Bus watches/proxies and publishes state to Home Assistant.
+
+    A plain ``async for`` loop over ``changes`` would block waiting on D-Bus signals and
+    leave an unhandled exception from ``active_task`` (for instance an ``aiomqtt.MqttError``
+    when the broker drops) undetected until some unrelated bus name changed. Racing both
+    tasks with ``asyncio.wait(..., return_when=FIRST_COMPLETED)`` lets either system wake
+    this loop immediately: attachment crashes re-raise right away to unwind Session
+    Runtime, while signal arrivals tear down and re-create the attachment as ownership
+    transitions.
+    """
+    signal_task_name = f"dbus_signal:{service_name}"
     next_signal: asyncio.Task[NameOwnerChanged] | None = None
 
     try:
-        next_signal = _schedule_signal(changes, service_name)
+        next_signal = schedule_next(changes, name=signal_task_name)
 
         while True:
-            waiters: list[asyncio.Task[object]] = (
-                [next_signal, active_task] if active_task is not None else [next_signal]
+            signal_ready, active_task = await _wait_for_race(
+                next_signal, active_task, service_name
             )
-            done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            if not signal_ready:
+                continue
 
-            if active_task is not None and active_task in done:
-                finished, active_task = active_task, None
-                # Surface unhandled feature failures immediately; passive features
-                # that return cleanly stay attached until the owner drops.
-                finished.result()
-                LOGGER.debug(
-                    "dbus_name_attachment_completed", service_name=service_name
+            changed_name, old_owner, new_owner = next_signal.result()
+            next_signal = schedule_next(changes, name=signal_task_name)
+            if changed_name == service_name:
+                active_task = await _apply_owner_change(
+                    service_name=service_name,
+                    old_owner=old_owner,
+                    new_owner=new_owner,
+                    active_task=active_task,
+                    on_present=on_present,
+                    on_absent=on_absent,
                 )
-
-            if next_signal not in done:
-                continue
-
-            try:
-                changed_name, old_owner, new_owner = next_signal.result()
-            except StopAsyncIteration:
-                LOGGER.debug("dbus_name_signal_stream_ended", service_name=service_name)
-                return
-
-            next_signal = _schedule_signal(changes, service_name)
-            if changed_name != service_name:
-                continue
-
-            active_task = await _apply_owner_change(
-                service_name=service_name,
-                old_owner=old_owner,
-                new_owner=new_owner,
-                active_task=active_task,
-                on_present=on_present,
-                on_absent=on_absent,
-            )
+    except StopAsyncIteration:
+        LOGGER.debug("D-Bus name-owner signal stream ended", service_name=service_name)
     finally:
-        await _cancel_task(next_signal)
-        await _cancel_task(active_task)
+        await cancel_task(next_signal)
+        await cancel_task(active_task)
 
 
 async def watch_name(
@@ -260,10 +268,12 @@ async def watch_name(
         active_task: asyncio.Task[None] | None = None
 
         if await source.name_has_owner(service_name):
-            LOGGER.info("dbus_name_owner_present", service_name=service_name)
+            LOGGER.info(
+                "D-Bus name already has an owner at startup", service_name=service_name
+            )
             active_task = asyncio.create_task(on_present(), name=f"dbus:{service_name}")
         else:
-            LOGGER.info("dbus_name_owner_absent", service_name=service_name)
+            LOGGER.info("D-Bus name has no owner at startup", service_name=service_name)
             await on_absent()
 
         await _consume_events(
