@@ -27,7 +27,7 @@ from sdbus.sd_bus_internals import SdBus
 from ha_tux.dbus import NameOwnerSource, SdbusNameOwnerSource, watch_name
 from ha_tux.runtime import SessionContext
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("power")
 
 UPOWER_SERVICE_NAME: Final = "org.freedesktop.UPower"
 UPOWER_DISPLAY_DEVICE_PATH: Final = "/org/freedesktop/UPower/devices/DisplayDevice"

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from pathlib import Path
 from typing import cast
 
-import pytest
 from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable._session import PublishPayload, SessionLike
+from structlog.testing import capture_logs
 
 from ha_tux.smart.entity import build_smart_publisher
 
@@ -198,17 +197,15 @@ def test_unreadable_report_marks_all_offline(tmp_path: Path) -> None:
     assert not _states(fake)
 
 
-def test_missing_report_at_startup_logs_error(
-    caplog: pytest.LogCaptureFixture, tmp_path: Path
-) -> None:
+def test_missing_report_at_startup_logs_error(tmp_path: Path) -> None:
     _fake, session = _session()
     missing_path = tmp_path / "missing-smart.json"
-    caplog.set_level(logging.ERROR, logger="ha_tux.smart.entity")
 
-    _ = build_smart_publisher(
-        session, DEVICE, HOST_IDENTIFIER, HOST_PREFIX, missing_path
-    )
+    with capture_logs() as logs:
+        _ = build_smart_publisher(
+            session, DEVICE, HOST_IDENTIFIER, HOST_PREFIX, missing_path
+        )
 
-    assert len(caplog.records) == 1
-    assert caplog.records[0].levelno == logging.ERROR
-    assert caplog.records[0].message == "SMART report unavailable at startup"
+    assert len(logs) == 1
+    assert logs[0]["log_level"] == "error"
+    assert logs[0]["event"] == "SMART report unavailable at startup"

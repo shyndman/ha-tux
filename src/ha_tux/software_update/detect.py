@@ -16,7 +16,7 @@ from ha_tux.config import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
 from ha_tux.foundation.strings import human_bytes, plural_suffix
 from ha_tux.foundation.subprocesses import CommandRunner, subprocess_runner
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("apt")
 
 __all__ = [
     "APT_PROBE_SCRIPT",

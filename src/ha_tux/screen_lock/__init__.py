@@ -18,7 +18,7 @@ from sdbus import DbusInterfaceCommonAsync, dbus_method_async
 from ha_tux.dbus import NameOwnerSource, session_name_owner_source, watch_name
 from ha_tux.runtime import SessionContext
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("lock")
 
 GNOME_SCREENSAVER_SERVICE_NAME: Final = "org.gnome.ScreenSaver"
 GNOME_SCREENSAVER_OBJECT_PATH: Final = "/org/gnome/ScreenSaver"

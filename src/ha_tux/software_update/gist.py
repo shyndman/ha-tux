@@ -10,7 +10,7 @@ from libsh import get_logger
 
 from ha_tux.foundation.subprocesses import CommandRunner, subprocess_runner
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("apt")
 
 CHHOTO_SITE_FALLBACK: Final = "https://go.don.haus"
 

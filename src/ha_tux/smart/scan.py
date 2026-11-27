@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import subprocess
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
@@ -10,10 +9,9 @@ from typing import ClassVar, Final, cast
 from libsh import get_logger, setup_logging_from_env
 from pydantic import BaseModel, ConfigDict
 
-from ha_tux.config import LOGGER_NAME
 from ha_tux.smart.report import SMART_REPORT_PATH
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger("smart")
 
 SMART_SCAN_COMMAND: Final = ("smartctl", "--scan-open", "-j")
 REPORT_FILE_MODE: Final = 0o644
@@ -48,7 +46,7 @@ def collect_reports(
         else:
             LOGGER.warning(
                 "Skipping SMART device without serial number",
-                extra={"device": dev.name},
+                device=dev.name,
             )
     return drives
 
@@ -67,7 +65,6 @@ def _read_device(dev: _ScanDevice) -> dict[str, object]:
 
 def main() -> None:
     setup_logging_from_env()
-    logger = get_logger(LOGGER_NAME)
     completed = subprocess.run(
         SMART_SCAN_COMMAND,
         check=False,
@@ -84,4 +81,4 @@ def main() -> None:
     SMART_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     _ = SMART_REPORT_PATH.write_text(json.dumps(report))
     SMART_REPORT_PATH.chmod(REPORT_FILE_MODE)
-    logger.info("Completed SMART drive scan", extra={"drives": len(drives)})
+    LOGGER.info("Completed SMART drive scan", drives=len(drives))

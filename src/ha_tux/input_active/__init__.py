@@ -22,7 +22,7 @@ from ha_tux.dbus import NameOwnerSource, session_name_owner_source, watch_name
 from ha_tux.foundation.time import seconds_to_milliseconds
 from ha_tux.runtime import SessionContext
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("input")
 
 IDLE_MONITOR_SERVICE_NAME: Final = "org.gnome.Mutter.IdleMonitor"
 IDLE_MONITOR_OBJECT_PATH: Final = "/org/gnome/Mutter/IdleMonitor/Core"

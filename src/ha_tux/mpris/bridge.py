@@ -45,7 +45,7 @@ from ha_tux.mpris.player import (
 )
 from ha_tux.runtime import SessionContext
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("mpris")
 
 HA_TUX_MEDIA_OBJECT_ID: Final = "desktop_media"
 HA_TUX_MEDIA_NAME: Final = "Desktop Media"

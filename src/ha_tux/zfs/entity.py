@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from typing import Final
 
 from ha_mqtt_discoverable import DeviceInfo, SessionLike
 from ha_mqtt_discoverable.sensors import Sensor, SensorInfo
+from libsh import get_logger
 
 from ha_tux.zfs.zpool import (
     PoolSnapshots,
@@ -17,7 +17,7 @@ from ha_tux.zfs.zpool import (
     read_zpool_statuses,
 )
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger("zfs")
 
 ENTITY_CATEGORY_DIAGNOSTIC: Final = "diagnostic"
 BYTES_UNIT: Final = "B"
