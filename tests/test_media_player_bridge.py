@@ -10,11 +10,11 @@ import pytest
 from aiomqtt import Message
 from ha_mqtt_discoverable.media_player import MediaPlayer
 
+from ha_tux.dbus import DbusDaemonAsync
 from ha_tux.mpris.album_art import AlbumArtResolver
 from ha_tux.mpris.bridge import AsyncMprisMediaPlayerBridge
 from ha_tux.mpris.mpris import (
     MICROSECONDS_PER_SECOND,
-    DbusDaemonAsync,
     MprisPlayerAsync,
     PlayerctldNoActivePlayerError,
     PropertiesChanged,

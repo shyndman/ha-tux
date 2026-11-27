@@ -12,6 +12,7 @@ from ha_mqtt_discoverable.media_player import (
     MediaPlayerInfo,
 )
 
+from ha_tux.dbus import DbusDaemonAsync, new_dbus_daemon_proxy
 from ha_tux.mpris.album_art import (
     AlbumArtPayload,
     AlbumArtResolver,
@@ -24,7 +25,6 @@ from ha_tux.mpris.entity import (
 from ha_tux.mpris.mpris import (
     MPRIS_PLAYER_INTERFACE,
     PLAYERCTLD_SERVICE_NAME,
-    DbusDaemonAsync,
     MetadataMap,
     MprisPlayerAsync,
     PlayerctldNoActivePlayerError,
@@ -34,7 +34,6 @@ from ha_tux.mpris.mpris import (
     metadata_string,
     microseconds_to_seconds,
     mpris_status_to_ha_state,
-    new_dbus_daemon_proxy,
     new_mpris_player_proxy,
     seconds_to_microseconds,
     track_id_from_metadata,
