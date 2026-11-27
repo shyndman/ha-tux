@@ -157,6 +157,6 @@ async def discover_pool_names() -> tuple[str, ...]:
     try:
         statuses = await read_zpool_statuses()
     except Exception as error:
-        get_logger(LOGGER_NAME).error("zfs_pool_discovery_failed", error=str(error))
+        get_logger(LOGGER_NAME).error("Failed to discover ZFS pools", error=str(error))
         return ()
     return tuple(status.name for status in statuses)

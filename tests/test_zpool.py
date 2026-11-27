@@ -185,5 +185,5 @@ def test_discover_pool_names_logs_error_when_zpool_fails(
     assert names == ()
     error_logs = [entry for entry in logs if entry.get("log_level") == "error"]
     assert len(error_logs) == 1
-    assert error_logs[0]["event"] == "zfs_pool_discovery_failed"
+    assert error_logs[0]["event"] == "Failed to discover ZFS pools"
     assert error_logs[0]["error"] == "zpool not found"

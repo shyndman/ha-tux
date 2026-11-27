@@ -401,7 +401,7 @@ def test_reconnect_logs_warning_within_grace_then_error_and_resets_on_connect() 
                 await task
 
         reconnect_logs = [
-            entry for entry in logs if entry.get("event") == "session_reconnecting"
+            entry for entry in logs if entry.get("event") == "Reconnecting MQTT session"
         ]
         assert [entry.get("log_level") for entry in reconnect_logs] == [
             "warning",

@@ -184,7 +184,7 @@ class SessionRuntime:
         elapsed = now - self._disconnect_started_at
         if elapsed >= self._reconnect_error_grace_seconds:
             LOGGER.error(
-                "session_reconnecting",
+                "Reconnecting MQTT session",
                 delay_seconds=delay,
                 elapsed_seconds=round(elapsed, 1),
                 error=str(cause),
@@ -193,7 +193,7 @@ class SessionRuntime:
             return
 
         LOGGER.warning(
-            "session_reconnecting",
+            "Reconnecting MQTT session",
             delay_seconds=delay,
             error=str(cause),
             error_type=type(cause).__name__,

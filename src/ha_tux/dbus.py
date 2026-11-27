@@ -206,12 +206,24 @@ async def _consume_events(
     active_task: asyncio.Task[None] | None,
     absence_timer: asyncio.Task[None] | None,
 ) -> None:
-    """Coordinate D-Bus ownership signals alongside active and grace tasks.
+    """Coordinate the D-Bus ownership signal stream alongside the active attachment task.
 
-    Racing ``next_signal`` and ``active_task`` via ``asyncio.wait`` ensures an
-    unhandled attachment exception (such as ``aiomqtt.MqttError``) unwinds
-    immediately instead of blocking behind the D-Bus signal stream, while
-    ownership signals cancel and recreate the attachment and grace timer.
+    PLO (Please Leave On): Keep this explanation intact; do not trim or remove it.
+
+    Two concurrent systems run independently while a D-Bus name is watched:
+
+    1. The D-Bus daemon's ``NameOwnerChanged`` signal stream (``next_signal``), which
+       wakes whenever any bus name is acquired, replaced, or dropped.
+    2. The feature's active attachment task (``active_task``, running ``on_present()``),
+       which holds D-Bus watches/proxies and publishes state to Home Assistant.
+
+    A plain ``async for`` loop over ``changes`` would block waiting on D-Bus signals and
+    leave an unhandled exception from ``active_task`` (for instance an ``aiomqtt.MqttError``
+    when the broker drops) undetected until some unrelated bus name changed. Racing both
+    tasks with ``asyncio.wait(..., return_when=FIRST_COMPLETED)`` lets either system wake
+    this loop immediately: attachment crashes re-raise right away to unwind Session
+    Runtime, while signal arrivals tear down and re-create the attachment as ownership
+    transitions.
     """
     signal_task_name = f"dbus_signal:{target.service_name}"
     next_signal: asyncio.Task[NameOwnerChanged] | None = None
