@@ -1,25 +1,26 @@
+"""Software-update Home Assistant entity publishing and command execution."""
+
 from __future__ import annotations
 
 import asyncio
-import logging
 import shutil
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import date
 
 import aiomqtt
 from ha_mqtt_discoverable import DeviceInfo, SessionLike
 from ha_mqtt_discoverable.sensors import Update, UpdateInfo
+from libsh import get_logger
 
-from ha_tux.gist import publish_gist, publish_shortlink
 from ha_tux.host_device import host_slug
-from ha_tux.run_state import StateStore
 from ha_tux.software_update.detect import (
     APT_UPGRADE_UNIT,
     BREW_UPGRADE_UNIT,
     SENTINEL_DATE,
     SYSTEMCTL_PATH,
+    SurfaceDecision,
     UpdateReport,
-    _run,
     decide_surface,
     entity_title,
     gist_body,
@@ -28,8 +29,13 @@ from ha_tux.software_update.detect import (
     release_summary,
     slugify,
 )
+from ha_tux.software_update.gist import publish_gist, publish_shortlink
+from ha_tux.software_update.runner import CommandRunner, subprocess_runner
+from ha_tux.software_update.state import ManagerState, StateStore
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
+
+TodayFn = Callable[[], date]
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -41,7 +47,31 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
+def _next_state(
+    *,
+    previous: ManagerState,
+    decision: SurfaceDecision,
+    gist_id: str | None,
+    short_url: str | None,
+) -> ManagerState:
+    return ManagerState(
+        gist_id=gist_id if gist_id is not None else previous.gist_id,
+        short_url=short_url if short_url is not None else previous.short_url,
+        notify_anchor=(
+            decision.notify_anchor.isoformat() if decision.notify_anchor else None
+        ),
+        last_install_date=(
+            decision.last_install_date.isoformat()
+            if decision.last_install_date
+            else None
+        ),
+        pending_set=tuple(sorted(decision.pending)),
+    )
+
+
 class ManagerPublisher:
+    """Publishes one package manager's ``Update`` entity and runs upgrades on demand."""
+
     def __init__(
         self,
         session: SessionLike,
@@ -56,6 +86,8 @@ class ManagerPublisher:
         slug: str,
         description: str,
         install_cmd: Sequence[str] | None = None,
+        runner: CommandRunner = subprocess_runner,
+        today: TodayFn = date.today,
     ) -> None:
         self.manager: str = manager
         self.label: str = label
@@ -67,6 +99,8 @@ class ManagerPublisher:
         self.install_cmd: tuple[str, ...] | None = (
             tuple(install_cmd) if install_cmd is not None else None
         )
+        self._runner: CommandRunner = runner
+        self._today: TodayFn = today
         self._lock: asyncio.Lock = asyncio.Lock()
         self._installed: str = SENTINEL_DATE
         self._latest: str = SENTINEL_DATE
@@ -82,54 +116,59 @@ class ManagerPublisher:
         self.entity: Update = Update(session, info, callback)
 
     async def publish(self) -> None:
+        """Query the package manager under lock and publish updated entity state."""
         async with self._lock:
             await self._publish_unlocked()
+
+    async def _publish_links(
+        self, report: UpdateReport, today: date, previous: ManagerState
+    ) -> tuple[str | None, str | None]:
+        gist_result = await publish_gist(
+            manager=self.manager,
+            body=gist_body(report, self.hostname, today.isoformat()),
+            description=self.description,
+            existing_gist_id=previous.gist_id,
+            runner=self._runner,
+        )
+        if gist_result is None:
+            return (None, previous.short_url)
+
+        short = await publish_shortlink(
+            slug=self.slug,
+            gist_url=gist_result.url,
+            existing_short_url=previous.short_url,
+            runner=self._runner,
+        )
+        return (gist_result.gist_id, short)
 
     async def _publish_unlocked(self) -> None:
         try:
             report = await self.query()
         except Exception:
-            LOGGER.exception(
-                "software_update_query_failed", extra={"manager": self.manager}
-            )
+            LOGGER.exception("software_update_query_failed", manager=self.manager)
             await self.entity.set_available(False)
             return
 
-        today = date.today()
-        refresh = today.isoformat()
-        st = self.state_store.get(self.manager)
+        today = self._today()
+        previous = self.state_store.get(self.manager)
         current = frozenset(p.name for p in report.packages if not p.pinned)
         decision = decide_surface(
             current=current,
-            previous=frozenset(st.pending_set),
-            notify_anchor=_parse_date(st.notify_anchor),
-            last_install_date=_parse_date(st.last_install_date),
+            previous=frozenset(previous.pending_set),
+            notify_anchor=_parse_date(previous.notify_anchor),
+            last_install_date=_parse_date(previous.last_install_date),
             today=today,
         )
         self._installed, self._latest = decision.installed, decision.latest
-        st.notify_anchor = (
-            decision.notify_anchor.isoformat() if decision.notify_anchor else None
-        )
-        st.last_install_date = (
-            decision.last_install_date.isoformat()
-            if decision.last_install_date
-            else None
-        )
-        st.pending_set = sorted(decision.pending)
 
-        body = gist_body(report, self.hostname, refresh)
-        gist_url = await publish_gist(self.manager, body, self.description, st)
-        short = (
-            await publish_shortlink(self.slug, gist_url, st)
-            if gist_url
-            else st.short_url
+        gist_id, short = await self._publish_links(report, today, previous)
+        next_state = _next_state(
+            previous=previous,
+            decision=decision,
+            gist_id=gist_id,
+            short_url=short,
         )
-
-        self.state_store.update(
-            self.manager,
-            gist_id=st.gist_id,
-            short_url=short or st.short_url,
-        )
+        self.state_store.set(self.manager, next_state)
         self.state_store.save()
 
         await self.entity.set_available(True)
@@ -138,35 +177,70 @@ class ManagerPublisher:
             latest=decision.latest,
             title=entity_title(self.label, report.count if decision.surfaced else 0),
             release_summary=release_summary(report) if decision.surfaced else None,
-            release_url=short,
+            release_url=next_state.short_url,
         )
 
     async def on_install(self, sender: Update, _message: aiomqtt.Message) -> None:
+        """Execute the configured upgrade command and republish fresh state."""
         async with self._lock:
             if self.install_cmd is None:
                 return
+
             await sender.set_state(
                 installed=self._installed, latest=self._latest, in_progress=True
             )
-            rc, out, err = await _run(self.install_cmd)
+            result = await self._runner(self.install_cmd)
             LOGGER.info(
                 "software_update_install_finished",
-                extra={"manager": self.manager, "returncode": rc},
+                manager=self.manager,
+                returncode=result.returncode,
             )
-            if rc != 0:
+            if result.returncode != 0:
                 LOGGER.warning(
-                    "%s install failed: %s", self.manager, (err or out).strip()
+                    "software_update_install_failed",
+                    manager=self.manager,
+                    error=(result.stderr or result.stdout).strip(),
                 )
             await self._publish_unlocked()
 
 
 class SoftwareUpdatePublisher:
+    """Publishes updates across every detected package manager on the host."""
+
     def __init__(self, managers: tuple[ManagerPublisher, ...]) -> None:
         self._managers: tuple[ManagerPublisher, ...] = managers
 
     async def publish(self) -> None:
+        """Poll and publish each configured package manager sequentially."""
         for manager in self._managers:
             await manager.publish()
+
+
+@dataclass(frozen=True, slots=True)
+class _ManagerSpec:
+    binary: str
+    manager: str
+    label: str
+    upgrade_unit: str
+    query: Callable[[str, CommandRunner], Awaitable[UpdateReport]]
+
+
+_MANAGER_SPECS: tuple[_ManagerSpec, ...] = (
+    _ManagerSpec(
+        "apt-get",
+        "apt",
+        "apt",
+        APT_UPGRADE_UNIT,
+        lambda exe, runner: query_apt(exe, runner=runner),
+    ),
+    _ManagerSpec(
+        "brew",
+        "brew",
+        "homebrew",
+        BREW_UPGRADE_UNIT,
+        lambda exe, runner: query_brew(exe, runner=runner),
+    ),
+)
 
 
 def build_software_update_publisher(
@@ -174,44 +248,36 @@ def build_software_update_publisher(
     device: DeviceInfo,
     hostname: str,
     state_store: StateStore,
+    *,
+    runner: CommandRunner = subprocess_runner,
+    today: TodayFn = date.today,
+    which: Callable[[str], str | None] = shutil.which,
 ) -> SoftwareUpdatePublisher | None:
+    """Construct publishers for every available package manager, or ``None`` if none."""
     host_prefix = host_slug(hostname)
     topic_host_slug = slugify(hostname)
     managers: list[ManagerPublisher] = []
 
-    apt_get = shutil.which("apt-get")
-    if apt_get is not None:
-        managers.append(
-            ManagerPublisher(
-                session,
-                device,
-                manager="apt",
-                label="apt",
-                query=lambda apt_get=apt_get: query_apt(apt_get),
-                state_store=state_store,
-                hostname=hostname,
-                host_prefix=host_prefix,
-                slug=f"{topic_host_slug}-apt-updates",
-                description=f"ha-tux apt updates on {hostname}",
-                install_cmd=(SYSTEMCTL_PATH, "start", "--wait", APT_UPGRADE_UNIT),
-            )
-        )
+    for spec in _MANAGER_SPECS:
+        executable = which(spec.binary)
+        if executable is None:
+            continue
 
-    brew = shutil.which("brew")
-    if brew is not None:
         managers.append(
             ManagerPublisher(
                 session,
                 device,
-                manager="brew",
-                label="homebrew",
-                query=lambda brew=brew: query_brew(brew),
+                manager=spec.manager,
+                label=spec.label,
+                query=lambda exe=executable, fn=spec.query: fn(exe, runner),
                 state_store=state_store,
                 hostname=hostname,
                 host_prefix=host_prefix,
-                slug=f"{topic_host_slug}-brew-updates",
-                description=f"ha-tux homebrew updates on {hostname}",
-                install_cmd=(SYSTEMCTL_PATH, "start", "--wait", BREW_UPGRADE_UNIT),
+                slug=f"{topic_host_slug}-{spec.manager}-updates",
+                description=f"ha-tux {spec.label} updates on {hostname}",
+                install_cmd=(SYSTEMCTL_PATH, "start", "--wait", spec.upgrade_unit),
+                runner=runner,
+                today=today,
             )
         )
 

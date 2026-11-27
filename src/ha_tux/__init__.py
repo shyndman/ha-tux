@@ -22,7 +22,6 @@ from ha_tux.host_device import build_host_device_info, host_slug
 from ha_tux.input_active import run_input_active
 from ha_tux.mpris import DEFAULT_POSITION_POLL_SECONDS, run_mpris
 from ha_tux.power import run_power
-from ha_tux.run_state import StateStore, state_file_path
 from ha_tux.runtime import (
     Feature,
     SessionContext,
@@ -33,7 +32,7 @@ from ha_tux.runtime import (
 from ha_tux.screen_lock import run_screen_lock
 from ha_tux.smart.entity import build_smart_publisher
 from ha_tux.smart.report import SMART_REPORT_PATH
-from ha_tux.software_update.publisher import build_software_update_publisher
+from ha_tux.software_update import run_software_update
 from ha_tux.zfs.entity import build_zfs_pool_publisher
 from ha_tux.zfs.zpool import discover_pool_names
 
@@ -66,21 +65,6 @@ async def _run_zfs(ctx: SessionContext) -> None:
     )
 
 
-async def _run_software_update(ctx: SessionContext) -> None:
-    state_store = StateStore.load(state_file_path())
-    publisher = build_software_update_publisher(
-        ctx.session, ctx.device, ctx.hostname, state_store
-    )
-    if publisher is None:
-        return
-
-    await run_poller(
-        name="software_update",
-        interval_seconds=ctx.config.software_update.poll_seconds,
-        poll=publisher.publish,
-    )
-
-
 async def _run_smart(ctx: SessionContext) -> None:
     host_identifier = ctx.device.identifiers
     if not isinstance(host_identifier, str):
@@ -105,7 +89,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature("input_active", _SESSION_ROLES, run_input_active),
     Feature("screen_lock", _SESSION_ROLES, run_screen_lock),
     Feature("zfs", _HOST_ROLES, _run_zfs),
-    Feature("software_update", _UPDATE_ROLES, _run_software_update),
+    Feature("software_update", _UPDATE_ROLES, run_software_update),
     Feature("power", _HOST_ROLES, run_power),
     Feature("smart", _HOST_ROLES, _run_smart),
 )

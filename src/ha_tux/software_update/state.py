@@ -1,29 +1,39 @@
+"""Immutable per-manager update state and atomic TOML persistence."""
+
 from __future__ import annotations
 
+import os
+import tempfile
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast, final
 
+from libsh import get_logger
 from xdg_base_dirs import xdg_state_home
+
+LOGGER = get_logger(__name__)
 
 STATE_DIRECTORY_NAME: Final = "ha-tux"
 STATE_FILE_NAME: Final = "state.toml"
 
 
 def state_file_path(state_home: Path | None = None) -> Path:
+    """Return the XDG state file path for persisted software-update metadata."""
     base = state_home if state_home is not None else xdg_state_home()
     return base / STATE_DIRECTORY_NAME / STATE_FILE_NAME
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ManagerState:
+    """Immutable persisted state for a single package manager."""
+
     gist_id: str | None = None
     short_url: str | None = None
     notify_anchor: str | None = None  # ISO date; frozen latest_version while on
     last_install_date: str | None = None  # ISO date; cooldown anchor
-    pending_set: list[str] = field(default_factory=list)  # last-seen actionable names
+    pending_set: tuple[str, ...] = ()  # sorted last-seen actionable names
 
 
 def _dump_toml(data: Mapping[str, ManagerState]) -> str:
@@ -55,61 +65,82 @@ def _dump_toml(data: Mapping[str, ManagerState]) -> str:
 
 @final
 class StateStore:
+    """Loads and atomically persists ``ManagerState`` tables in ``state.toml``."""
+
     def __init__(self, path: Path, data: dict[str, ManagerState]) -> None:
         self._path: Path = path
         self._data: dict[str, ManagerState] = data
 
     @classmethod
     def load(cls, path: Path) -> StateStore:
+        """Load persisted state from ``path``, or return an empty store if absent."""
         data: dict[str, ManagerState] = {}
         try:
             raw = path.read_bytes()
         except FileNotFoundError:
+            LOGGER.debug("software_update_state_absent", path=os.fspath(path))
             return cls(path, data)
+
         parsed = cast(dict[str, object], tomllib.loads(raw.decode()))
         for manager, table in parsed.items():
             if not isinstance(table, dict):
                 continue
-            table = cast(dict[str, object], table)
+            table_map = cast(dict[str, object], table)
             data[manager] = ManagerState(
-                gist_id=_opt_str(table.get("gist_id")),
-                short_url=_opt_str(table.get("short_url")),
-                notify_anchor=_opt_str(table.get("notify_anchor")),
-                last_install_date=_opt_str(table.get("last_install_date")),
-                pending_set=_opt_str_list(table.get("pending_set")),
+                gist_id=_opt_str(table_map.get("gist_id")),
+                short_url=_opt_str(table_map.get("short_url")),
+                notify_anchor=_opt_str(table_map.get("notify_anchor")),
+                last_install_date=_opt_str(table_map.get("last_install_date")),
+                pending_set=_opt_str_tuple(table_map.get("pending_set")),
             )
+        LOGGER.debug(
+            "software_update_state_loaded",
+            path=os.fspath(path),
+            managers=sorted(data),
+        )
         return cls(path, data)
 
     def get(self, manager: str) -> ManagerState:
-        state = self._data.get(manager)
-        if state is None:
-            state = ManagerState()
-            self._data[manager] = state
-        return state
+        """Return the current immutable state for ``manager``."""
+        return self._data.get(manager, ManagerState())
 
-    def update(
-        self,
-        manager: str,
-        *,
-        gist_id: str | None = None,
-        short_url: str | None = None,
-    ) -> None:
-        state = self.get(manager)
-        if gist_id is not None:
-            state.gist_id = gist_id
-        if short_url is not None:
-            state.short_url = short_url
+    def set(self, manager: str, state: ManagerState) -> None:
+        """Replace the state entry for ``manager`` in memory."""
+        self._data[manager] = state
 
     def save(self) -> None:
+        """Atomically write the full store to disk via temp file, fsync, and replace."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        _ = self._path.write_text(_dump_toml(self._data))
+        payload = _dump_toml(self._data)
+        tmp_path: Path | None = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self._path.parent,
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp:
+                tmp_path = Path(tmp.name)
+                _ = tmp.write(payload)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.replace(tmp_path, self._path)
+            tmp_path = None
+        finally:
+            if tmp_path is not None and tmp_path.exists():
+                tmp_path.unlink()
+
+        LOGGER.debug("software_update_state_saved", path=os.fspath(self._path))
 
 
 def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _opt_str_list(value: object) -> list[str]:
+def _opt_str_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, list):
-        return []
-    return [v for v in cast(list[object], value) if isinstance(v, str)]
+        return ()
+    return tuple(v for v in cast(list[object], value) if isinstance(v, str))
