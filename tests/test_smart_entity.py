@@ -211,4 +211,4 @@ def test_missing_report_at_startup_logs_error(
 
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.ERROR
-    assert caplog.records[0].message == "smart_report_unavailable"
+    assert caplog.records[0].message == "SMART report unavailable at startup"
