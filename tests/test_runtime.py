@@ -1,20 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
-from types import TracebackType
-from typing import cast, overload
 
 import aiomqtt
 import pytest
-from ha_mqtt_discoverable import (
-    CommandCallback,
-    CommandPayloadParser,
-    DeviceInfo,
-    ParsedCommandCallback,
-)
+from ha_mqtt_discoverable import DeviceInfo
 from ha_mqtt_discoverable.sensors import Button, ButtonInfo
 
 from ha_tux.config import HaTuxConfig
@@ -26,153 +17,10 @@ from ha_tux.runtime import (
     SessionRuntime,
     run_poller,
 )
+from tests.fakes import InMemorySession
 
 DEVICE = DeviceInfo(name="ha-tux", identifiers="ha-tux-test")
 TEST_CONFIG = HaTuxConfig()
-
-
-@dataclass(frozen=True, slots=True)
-class PublishedMessage:
-    topic: str
-    payload: str | bytes | int | float | None
-    retain: bool
-    qos: int
-
-
-class InMemorySession:
-    """Test adapter satisfying ManagedSession with controllable transport failure
-    and inbound command delivery."""
-
-    def __init__(
-        self,
-        *,
-        on_callback_error: CallbackErrorHandler,
-        connect_error: Exception | None = None,
-    ) -> None:
-        self._on_callback_error: CallbackErrorHandler = on_callback_error
-        self._connect_error: Exception | None = connect_error
-        self._closed_event: asyncio.Event = asyncio.Event()
-        self._failure: Exception | None = None
-        self._commands: dict[str, Callable[[aiomqtt.Message], Awaitable[None]]] = {}
-        self.published: list[PublishedMessage] = []
-        self.entered: bool = False
-        self.exited: bool = False
-
-    @property
-    def discovery_prefix(self) -> str:
-        return "homeassistant"
-
-    @property
-    def state_prefix(self) -> str:
-        return "hmd"
-
-    @property
-    def status_topic(self) -> str:
-        return "hmd/ha-tux-test/status"
-
-    async def __aenter__(self) -> InMemorySession:
-        if self._connect_error is not None:
-            raise self._connect_error
-
-        self.entered = True
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        del exc_type, exc, tb
-        self.exited = True
-        self._closed_event.set()
-
-    async def wait_closed(self) -> None:
-        if self._failure is not None:
-            raise self._failure
-
-        _ = await self._closed_event.wait()
-        if self._failure is not None:
-            raise self._failure
-
-    async def publish(
-        self,
-        topic: str,
-        payload: str | bytes | int | float | None,
-        *,
-        retain: bool = False,
-        qos: int = 0,
-    ) -> None:
-        if self._failure is not None:
-            raise self._failure
-
-        self.published.append(PublishedMessage(topic, payload, retain, qos))
-
-    @overload
-    def register_command[SenderT](
-        self,
-        topic: str,
-        sender: SenderT,
-        callback: CommandCallback[SenderT],
-        *,
-        qos: int = 1,
-        command_name: str | None = None,
-    ) -> None: ...
-
-    @overload
-    def register_command[SenderT, ParsedT](
-        self,
-        topic: str,
-        sender: SenderT,
-        callback: ParsedCommandCallback[SenderT, ParsedT],
-        *,
-        parser: CommandPayloadParser[ParsedT],
-        qos: int = 1,
-        command_name: str | None = None,
-    ) -> None: ...
-
-    def register_command[SenderT, ParsedT](
-        self,
-        topic: str,
-        sender: SenderT,
-        callback: CommandCallback[SenderT] | ParsedCommandCallback[SenderT, ParsedT],
-        *,
-        parser: CommandPayloadParser[ParsedT] | None = None,
-        qos: int = 1,
-        command_name: str | None = None,
-    ) -> None:
-        del qos, command_name
-        dispatch = cast(Callable[..., Awaitable[None]], callback)
-
-        async def handle(message: aiomqtt.Message) -> None:
-            if parser is not None:
-                await dispatch(sender, parser(message), message)
-            else:
-                await dispatch(sender, message)
-
-        self._commands[topic] = handle
-
-    @property
-    def command_topics(self) -> tuple[str, ...]:
-        return tuple(self._commands)
-
-    def fail_transport(self, error: Exception) -> None:
-        if self._failure is None:
-            self._failure = error
-        self._closed_event.set()
-
-    async def deliver(self, topic: str, payload: bytes = b"PRESS") -> None:
-        handler = self._commands[topic]
-        message = aiomqtt.Message(
-            topic=topic, payload=payload, qos=1, retain=False, mid=1, properties=None
-        )
-        try:
-            await handler(message)
-        except Exception as error:
-            try:
-                await self._on_callback_error(error, message)
-            except Exception as propagated:
-                self.fail_transport(propagated)
 
 
 def _make_runtime(
