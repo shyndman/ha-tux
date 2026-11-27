@@ -1,13 +1,11 @@
 import argparse
 import asyncio
 import socket
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, cast
 
-from ha_mqtt_discoverable import DeviceInfo, MqttSession, Settings
+from ha_mqtt_discoverable import Settings
 from libsh import get_logger, setup_logging_from_env
 
 from ha_tux.config import (
@@ -20,8 +18,6 @@ from ha_tux.config import (
     load_config,
     parse_role,
 )
-from ha_tux.mpris.entity import build_media_player_entity
-from ha_tux.zfs.entity import build_zfs_pool_publisher
 from ha_tux.host_device import build_host_device_info, host_slug
 from ha_tux.input_active.entity import (
     InputActivePublisher,
@@ -32,142 +28,126 @@ from ha_tux.input_active.monitor import (
     InputActiveWatcher,
     new_idle_monitor_proxy,
 )
-from ha_tux.screen_lock.entity import LockPublisher, build_lock_publisher
-from ha_tux.power.entity import PowerPublisher, build_power_publisher
-from ha_tux.power.monitor import PowerWatcher, new_display_device_proxy
 from ha_tux.mpris.bridge import (
     DEFAULT_POSITION_POLL_SECONDS,
     AsyncMprisMediaPlayerBridge,
     create_bridge,
 )
-from ha_tux.poller import AsyncPoller
+from ha_tux.mpris.entity import build_media_player_entity
+from ha_tux.power.entity import PowerPublisher, build_power_publisher
+from ha_tux.power.monitor import PowerWatcher, new_display_device_proxy
 from ha_tux.run_state import StateStore, state_file_path
-from ha_tux.software_update.publisher import build_software_update_publisher
+from ha_tux.runtime import (
+    Feature,
+    SessionContext,
+    SessionRuntime,
+    mqtt_session_factory,
+    run_poller,
+)
+from ha_tux.screen_lock.entity import LockPublisher, build_lock_publisher
 from ha_tux.smart.entity import build_smart_publisher
 from ha_tux.smart.report import SMART_REPORT_PATH
+from ha_tux.software_update.publisher import build_software_update_publisher
+from ha_tux.zfs.entity import build_zfs_pool_publisher
 from ha_tux.zfs.zpool import discover_pool_names
 
 STARTUP_EVENT = "application_started"
-MQTT_RECONNECT_DELAY_SECONDS = 2.0
 
 __all__ = [
     "DEFAULT_MQTT_DISCOVERY_PREFIX",
     "DEFAULT_MQTT_STATE_PREFIX",
     "DEFAULT_MQTT_URL",
     "DEFAULT_POSITION_POLL_SECONDS",
+    "Feature",
     "HaTuxConfig",
+    "SessionContext",
+    "SessionRuntime",
     "build_mqtt_settings",
+    "features_for_role",
     "main",
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class Activation:
-    session: MqttSession
-    device: DeviceInfo
-    hostname: str
-    host_prefix: str
-    config: HaTuxConfig
-    tasks: asyncio.TaskGroup
-    cleanup: AsyncExitStack
-
-
-FeatureActivate = Callable[[Activation], Awaitable[None]]
-
-
-@dataclass(frozen=True, slots=True)
-class Feature:
-    name: str
-    roles: frozenset[Role]
-    activate: FeatureActivate
-
-
-async def _activate_media(act: Activation) -> None:
-    entity = build_media_player_entity(act.device, host_prefix=act.host_prefix)
+async def _run_media(ctx: SessionContext) -> None:
+    entity = build_media_player_entity(ctx.device, host_prefix=ctx.host_prefix)
     bridge: AsyncMprisMediaPlayerBridge = create_bridge(
-        act.session,
+        ctx.session,
         entity,
-        service_name=act.config.mpris.service,
-        position_poll_seconds=act.config.mpris.position_poll_seconds,
+        service_name=ctx.config.mpris.service,
+        position_poll_seconds=ctx.config.mpris.position_poll_seconds,
     )
-    await bridge.start()
-    _ = act.cleanup.push_async_callback(bridge.stop)
-    _ = act.tasks.create_task(bridge.wait_until_stopped_or_failed())
+    await bridge.run()
 
 
-async def _activate_input_active(act: Activation) -> None:
+async def _run_input_active(ctx: SessionContext) -> None:
     publisher: InputActivePublisher = build_input_active_publisher(
-        act.session, act.device, act.host_prefix
+        ctx.session, ctx.device, ctx.host_prefix
     )
     watcher = InputActiveWatcher(
         monitor=new_idle_monitor_proxy(),
         idle_timeout_ms=int(
-            act.config.input_active.idle_timeout_seconds * MILLISECONDS_PER_SECOND
+            ctx.config.input_active.idle_timeout_seconds * MILLISECONDS_PER_SECOND
         ),
         on_change=publisher.set_active,
     )
-    _ = act.tasks.create_task(watcher.run())
+    await watcher.run()
 
 
-async def _activate_lock(act: Activation) -> None:
-    lock: LockPublisher = build_lock_publisher(act.session, act.device, act.host_prefix)
+async def _run_lock(ctx: SessionContext) -> None:
+    lock: LockPublisher = build_lock_publisher(ctx.session, ctx.device, ctx.host_prefix)
     await lock.announce()
 
 
-async def _activate_zfs(act: Activation) -> None:
+async def _run_zfs(ctx: SessionContext) -> None:
     pool_names = await discover_pool_names()
     publisher = build_zfs_pool_publisher(
-        act.session, act.device, pool_names, act.host_prefix
+        ctx.session, ctx.device, pool_names, ctx.host_prefix
     )
-    _ = act.tasks.create_task(
-        AsyncPoller(
-            name="zfs",
-            interval_seconds=act.config.zfs.poll_seconds,
-            poll=publisher.publish,
-        ).run()
+    await run_poller(
+        name="zfs",
+        interval_seconds=ctx.config.zfs.poll_seconds,
+        poll=publisher.publish,
     )
 
 
-async def _activate_software_update(act: Activation) -> None:
+async def _run_software_update(ctx: SessionContext) -> None:
     state_store = StateStore.load(state_file_path())
     publisher = build_software_update_publisher(
-        act.session, act.device, act.hostname, state_store
+        ctx.session, ctx.device, ctx.hostname, state_store
     )
     if publisher is None:
         return
-    _ = act.tasks.create_task(
-        AsyncPoller(
-            name="software_update",
-            interval_seconds=act.config.software_update.poll_seconds,
-            poll=publisher.publish,
-        ).run()
+
+    await run_poller(
+        name="software_update",
+        interval_seconds=ctx.config.software_update.poll_seconds,
+        poll=publisher.publish,
     )
 
 
-async def _activate_power(act: Activation) -> None:
+async def _run_power(ctx: SessionContext) -> None:
     publisher: PowerPublisher = build_power_publisher(
-        act.session, act.device, act.host_prefix
+        ctx.session, ctx.device, ctx.host_prefix
     )
     watcher = PowerWatcher(
         device=new_display_device_proxy(),
         on_change=publisher.update,
     )
-    _ = act.tasks.create_task(watcher.run())
+    await watcher.run()
 
 
-async def _activate_smart(act: Activation) -> None:
-    host_identifier = act.device.identifiers
+async def _run_smart(ctx: SessionContext) -> None:
+    host_identifier = ctx.device.identifiers
     if not isinstance(host_identifier, str):
         return
+
     publisher = build_smart_publisher(
-        act.session, act.device, host_identifier, act.host_prefix, SMART_REPORT_PATH
+        ctx.session, ctx.device, host_identifier, ctx.host_prefix, SMART_REPORT_PATH
     )
-    _ = act.tasks.create_task(
-        AsyncPoller(
-            name="smart",
-            interval_seconds=act.config.smart.poll_seconds,
-            poll=publisher.publish,
-        ).run()
+    await run_poller(
+        name="smart",
+        interval_seconds=ctx.config.smart.poll_seconds,
+        poll=publisher.publish,
     )
 
 
@@ -176,13 +156,13 @@ _HOST_ROLES: frozenset[Role] = frozenset({"host", "all"})
 _UPDATE_ROLES: frozenset[Role] = frozenset({"updates", "all"})
 
 FEATURES: tuple[Feature, ...] = (
-    Feature("mpris", _SESSION_ROLES, _activate_media),
-    Feature("input_active", _SESSION_ROLES, _activate_input_active),
-    Feature("screen_lock", _SESSION_ROLES, _activate_lock),
-    Feature("zfs", _HOST_ROLES, _activate_zfs),
-    Feature("software_update", _UPDATE_ROLES, _activate_software_update),
-    Feature("power", _HOST_ROLES, _activate_power),
-    Feature("smart", _HOST_ROLES, _activate_smart),
+    Feature("mpris", _SESSION_ROLES, _run_media),
+    Feature("input_active", _SESSION_ROLES, _run_input_active),
+    Feature("screen_lock", _SESSION_ROLES, _run_lock),
+    Feature("zfs", _HOST_ROLES, _run_zfs),
+    Feature("software_update", _UPDATE_ROLES, _run_software_update),
+    Feature("power", _HOST_ROLES, _run_power),
+    Feature("smart", _HOST_ROLES, _run_smart),
 )
 
 
@@ -198,11 +178,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     setup_logging_from_env()
     logger = get_logger(LOGGER_NAME)
     logger.info(STARTUP_EVENT)
+
     parser = argparse.ArgumentParser(prog="ha-tux")
     _ = parser.add_argument("--config", type=Path, default=None)
     namespace = cast(CliArgs, cast(object, parser.parse_args(argv)))
+
     config = load_config(path=namespace.config)
     role = parse_role()
+
     try:
         asyncio.run(async_main(config, role))
     except KeyboardInterrupt:
@@ -215,28 +198,16 @@ async def async_main(config: HaTuxConfig, role: Role) -> None:
     hostname = socket.gethostname()
     host_prefix = host_slug(hostname)
     features = features_for_role(role)
-    logger = get_logger(LOGGER_NAME)
-    while True:
-        try:
-            async with MqttSession(mqtt_settings) as session:
-                async with AsyncExitStack() as cleanup:
-                    async with asyncio.TaskGroup() as tasks:
-                        act = Activation(
-                            session=session,
-                            device=device,
-                            hostname=hostname,
-                            host_prefix=host_prefix,
-                            config=config,
-                            tasks=tasks,
-                            cleanup=cleanup,
-                        )
-                        for feature in features:
-                            await feature.activate(act)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("session_failed_reconnecting")
-            await asyncio.sleep(MQTT_RECONNECT_DELAY_SECONDS)
+
+    runtime = SessionRuntime(
+        session_factory=mqtt_session_factory(mqtt_settings),
+        features=features,
+        device=device,
+        hostname=hostname,
+        host_prefix=host_prefix,
+        config=config,
+    )
+    await runtime.run()
 
 
 def build_mqtt_settings(config: HaTuxConfig, role: Role) -> Settings.MQTT:

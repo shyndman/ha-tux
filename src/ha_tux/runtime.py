@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from dataclasses import dataclass
+from types import TracebackType
+from typing import Final, Protocol
+
+import aiomqtt
+from ha_mqtt_discoverable import DeviceInfo, MqttSession, SessionLike, Settings
+from libsh import get_logger
+
+from ha_tux.config import LOGGER_NAME, HaTuxConfig, Role
+
+LOGGER = get_logger(LOGGER_NAME)
+
+INITIAL_RECONNECT_DELAY_SECONDS: Final[float] = 2.0
+MAX_RECONNECT_DELAY_SECONDS: Final[float] = 60.0
+BACKOFF_MULTIPLIER: Final[float] = 2.0
+
+_CONNECT_ERRORS: Final[tuple[type[Exception], ...]] = (aiomqtt.MqttError, OSError)
+
+CallbackErrorHandler = Callable[[Exception, aiomqtt.Message], Awaitable[None]]
+SleepFn = Callable[[float], Awaitable[None]]
+
+
+class ManagedSession(SessionLike, Protocol):
+    async def __aenter__(self) -> ManagedSession: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
+
+    async def wait_closed(self) -> None: ...
+
+
+SessionFactory = Callable[[CallbackErrorHandler], ManagedSession]
+
+
+def mqtt_session_factory(settings: Settings.MQTT) -> SessionFactory:
+    def create(on_callback_error: CallbackErrorHandler) -> ManagedSession:
+        return MqttSession(settings, on_callback_error=on_callback_error)
+
+    return create
+
+
+@dataclass(frozen=True, slots=True)
+class SessionContext:
+    session: SessionLike
+    device: DeviceInfo
+    hostname: str
+    host_prefix: str
+    config: HaTuxConfig
+
+
+FeatureRun = Callable[[SessionContext], Coroutine[object, object, None]]
+
+
+@dataclass(frozen=True, slots=True)
+class Feature:
+    name: str
+    roles: frozenset[Role]
+    run: FeatureRun
+
+
+async def run_poller(
+    *,
+    name: str,
+    interval_seconds: float,
+    poll: Callable[[], Awaitable[None]],
+    sleep: SleepFn = asyncio.sleep,
+) -> None:
+    """Invoke ``poll`` immediately, then repeat on a fixed interval."""
+    LOGGER.debug("poller_started", poller=name, interval_seconds=interval_seconds)
+
+    while True:
+        try:
+            await poll()
+        except Exception:
+            LOGGER.exception("poller_iteration_failed", poller=name)
+            raise
+
+        await sleep(interval_seconds)
+
+
+class SessionRuntime:
+    """Supervises one MQTT session and all active features for a role.
+
+    Connect-time transport errors (``MqttError`` / ``OSError``) and post-connect
+    ``MqttError`` failures trigger in-process reconnect with bounded exponential
+    backoff (2s -> 60s cap, holding at 60s indefinitely and resetting once a
+    session connects cleanly). Non-MQTT command errors are isolated to logs;
+    unhandled non-MQTT feature failures unwind the session and propagate so
+    systemd can restart the process.
+    """
+
+    def __init__(
+        self,
+        *,
+        session_factory: SessionFactory,
+        features: Sequence[Feature],
+        device: DeviceInfo,
+        hostname: str,
+        host_prefix: str,
+        config: HaTuxConfig,
+        sleep: SleepFn = asyncio.sleep,
+    ) -> None:
+        self._session_factory: SessionFactory = session_factory
+        self._features: tuple[Feature, ...] = tuple(features)
+        self._device: DeviceInfo = device
+        self._hostname: str = hostname
+        self._host_prefix: str = host_prefix
+        self._config: HaTuxConfig = config
+        self._sleep: SleepFn = sleep
+        self._delay_seconds: float = INITIAL_RECONNECT_DELAY_SECONDS
+
+    async def run(self) -> None:
+        feature_names = [feature.name for feature in self._features]
+        LOGGER.info("session_runtime_started", features=feature_names)
+        self._delay_seconds = INITIAL_RECONNECT_DELAY_SECONDS
+
+        while True:
+            try:
+                await self._run_once()
+            except asyncio.CancelledError:
+                LOGGER.info("session_runtime_cancelled")
+                raise
+            except _TransportReconnectError as reconnect:
+                delay = self._delay_seconds
+                LOGGER.warning(
+                    "session_reconnecting",
+                    delay_seconds=delay,
+                    error=str(reconnect.cause),
+                    error_type=type(reconnect.cause).__name__,
+                )
+                await self._sleep(delay)
+                self._delay_seconds = min(
+                    delay * BACKOFF_MULTIPLIER, MAX_RECONNECT_DELAY_SECONDS
+                )
+            except Exception:
+                LOGGER.exception("session_fatal_failure")
+                raise
+            else:
+                LOGGER.info("session_closed_cleanly")
+                return
+
+    async def _run_once(self) -> None:
+        session = self._session_factory(self._on_callback_error)
+
+        try:
+            entered = await session.__aenter__()
+        except _CONNECT_ERRORS as error:
+            raise _TransportReconnectError(error) from error
+
+        if self._delay_seconds != INITIAL_RECONNECT_DELAY_SECONDS:
+            LOGGER.info(
+                "session_backoff_reset",
+                previous_delay_seconds=self._delay_seconds,
+                delay_seconds=INITIAL_RECONNECT_DELAY_SECONDS,
+            )
+            self._delay_seconds = INITIAL_RECONNECT_DELAY_SECONDS
+
+        LOGGER.info(
+            "session_connected",
+            features=[feature.name for feature in self._features],
+        )
+
+        ctx = SessionContext(
+            session=entered,
+            device=self._device,
+            hostname=self._hostname,
+            host_prefix=self._host_prefix,
+            config=self._config,
+        )
+
+        try:
+            async with asyncio.TaskGroup() as tasks:
+                _ = tasks.create_task(entered.wait_closed(), name="mqtt_transport")
+
+                for feature in self._features:
+                    LOGGER.debug("feature_starting", feature=feature.name)
+                    _ = tasks.create_task(
+                        feature.run(ctx),
+                        name=f"feature:{feature.name}",
+                    )
+        except BaseException as error:
+            await session.__aexit__(type(error), error, error.__traceback__)
+            mqtt_error = _extract_mqtt_error(error)
+            if mqtt_error is not None:
+                raise _TransportReconnectError(mqtt_error) from mqtt_error
+            raise
+        else:
+            await session.__aexit__(None, None, None)
+
+    async def _on_callback_error(
+        self, error: Exception, message: aiomqtt.Message
+    ) -> None:
+        topic = str(message.topic)
+
+        if isinstance(error, aiomqtt.MqttError):
+            LOGGER.warning(
+                "command_callback_transport_failed",
+                topic=topic,
+                error=str(error),
+                error_type=type(error).__name__,
+            )
+            raise error
+
+        LOGGER.warning(
+            "command_callback_isolated",
+            topic=topic,
+            error=str(error),
+            error_type=type(error).__name__,
+        )
+
+
+class _TransportReconnectError(Exception):
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.cause: Exception = cause
+
+
+def _extract_mqtt_error(error: BaseException) -> Exception | None:
+    if isinstance(error, aiomqtt.MqttError):
+        return error
+
+    if isinstance(error, ExceptionGroup):
+        matched, rest = error.split(aiomqtt.MqttError)
+        if matched is not None and rest is None:
+            return matched
+
+    return None

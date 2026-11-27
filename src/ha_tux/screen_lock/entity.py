@@ -4,8 +4,7 @@ import logging
 from typing import Final
 
 import aiomqtt
-from ha_mqtt_discoverable import DeviceInfo
-from ha_mqtt_discoverable._session import SessionLike
+from ha_mqtt_discoverable import DeviceInfo, SessionLike
 from ha_mqtt_discoverable.sensors import Button, ButtonInfo
 
 from ha_tux.screen_lock.screensaver import GnomeScreenSaverAsync, new_screensaver_proxy

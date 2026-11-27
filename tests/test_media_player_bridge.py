@@ -272,7 +272,7 @@ def test_seek_noops_without_capability() -> None:
     asyncio.run(run())
 
 
-def test_command_callbacks_enqueue_async_work() -> None:
+def test_command_callbacks_dispatch_async_work() -> None:
     async def run() -> None:
         bridge, player, _media, _dbus = build_bridge()
         callbacks = bridge.callbacks()
@@ -283,8 +283,6 @@ def test_command_callbacks_enqueue_async_work() -> None:
             cast(MediaPlayer, cast(object, None)),
             cast(Message, cast(object, None)),
         )
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
 
         assert player.play_calls == 1
 
@@ -295,13 +293,18 @@ def test_observer_publish_failure_stops_bridge() -> None:
     async def run() -> None:
         bridge, player, media, _dbus = build_bridge()
 
-        await bridge.start()
+        task = asyncio.create_task(bridge.run())
+        await asyncio.sleep(0)
         media.fail_position = True
         await player.seeked.emit(8 * MICROSECONDS_PER_SECOND)
 
-        with pytest.raises(RuntimeError, match="publish failed"):
-            await asyncio.wait_for(bridge.wait_until_stopped_or_failed(), timeout=1)
-        await bridge.stop()
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await asyncio.wait_for(task, timeout=1)
+
+        assert any(
+            isinstance(err, RuntimeError) and "publish failed" in str(err)
+            for err in exc_info.value.exceptions
+        )
 
     asyncio.run(run())
 
@@ -313,7 +316,8 @@ def test_no_active_player_snapshot_clears_state_and_stops_polling(
         bridge, player, media, _dbus = build_bridge()
         caplog.set_level(logging.INFO, logger="ha_tux.mpris.bridge")
 
-        await bridge.start()
+        task = asyncio.create_task(bridge.run())
+        await asyncio.sleep(0)
         player.playback_status.error = PlayerctldNoActivePlayerError("No active player")
         media.calls.clear()
 
@@ -340,7 +344,9 @@ def test_no_active_player_snapshot_clears_state_and_stops_polling(
         assert ("available", True) in media.calls
         assert ("state", "playing") in media.calls
         assert ("title", "Song") in media.calls
-        await bridge.stop()
+        _ = task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
     asyncio.run(run())
 
@@ -352,13 +358,16 @@ def test_no_active_player_during_position_poll_marks_unavailable_and_stops(
         bridge, player, media, _dbus = build_bridge()
         caplog.set_level(logging.INFO, logger="ha_tux.mpris.bridge")
 
-        await bridge.start()
+        task = asyncio.create_task(bridge.run())
+        await asyncio.sleep(0)
         media.calls.clear()
         player.position.reads = 0
         player.position.error = PlayerctldNoActivePlayerError("No active player")
 
         await asyncio.sleep(0.05)
-        await bridge.stop()
+        _ = task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
         assert player.position.reads == 1
         assert ("available", False) in media.calls

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from ha_mqtt_discoverable import DeviceInfo
-from ha_mqtt_discoverable._session import SessionLike
+from ha_mqtt_discoverable import DeviceInfo, SessionLike
 from ha_mqtt_discoverable.sensors import (
     BinarySensor,
     BinarySensorInfo,

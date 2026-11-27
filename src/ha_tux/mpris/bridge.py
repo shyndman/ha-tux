@@ -1,11 +1,11 @@
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 
 from aiomqtt import Message
-from ha_mqtt_discoverable import MqttSession
+from ha_mqtt_discoverable import SessionLike
 from ha_mqtt_discoverable.media_player import (
     MediaPlayer,
     MediaPlayerCallbacks,
@@ -84,37 +84,19 @@ class AsyncMprisMediaPlayerBridge:
         self.position_poll_seconds: float = position_poll_seconds
         self._last_snapshot: MediaSnapshot | None = None
         self._last_nonzero_volume: float | None = None
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._command_tasks: set[asyncio.Task[None]] = set()
-        self._failure_event: asyncio.Event = asyncio.Event()
-        self._failure: Exception | None = None
-        self._stopped: bool = False
 
-    async def start(self) -> None:
-        self._stopped = False
+    async def run(self) -> None:
+        LOGGER.info("mpris_bridge_starting", extra={"service_name": self.service_name})
         await self.publish_snapshot("initial")
-        self._tasks.add(self._track_task(self._watch_properties()))
-        self._tasks.add(self._track_task(self._watch_seeked()))
-        self._tasks.add(self._track_task(self._watch_name_owner()))
-        self._tasks.add(self._track_task(self._publish_position_while_playing()))
 
-    async def stop(self) -> None:
-        self._stopped = True
-        _ = self._failure_event.set()
-        for task in tuple(self._tasks | self._command_tasks):
-            _ = task.cancel()
-        for task in tuple(self._tasks | self._command_tasks):
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        self._tasks.clear()
-        self._command_tasks.clear()
-
-    async def wait_until_stopped_or_failed(self) -> None:
-        _ = await self._failure_event.wait()
-        if self._failure is not None:
-            raise self._failure
+        async with asyncio.TaskGroup() as tasks:
+            _ = tasks.create_task(self._watch_properties(), name="mpris:properties")
+            _ = tasks.create_task(self._watch_seeked(), name="mpris:seeked")
+            _ = tasks.create_task(self._watch_name_owner(), name="mpris:name_owner")
+            _ = tasks.create_task(
+                self._publish_position_while_playing(),
+                name="mpris:position_poll",
+            )
 
     async def publish_snapshot(self, reason: PublishReason) -> None:
         try:
@@ -224,34 +206,34 @@ class AsyncMprisMediaPlayerBridge:
         }
 
     async def _play_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        self._schedule_command(self.handle_play())
+        await self.handle_play()
 
     async def _pause_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        self._schedule_command(self.handle_pause())
+        await self.handle_pause()
 
     async def _stop_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        self._schedule_command(self.handle_stop())
+        await self.handle_stop()
 
     async def _next_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        self._schedule_command(self.handle_next_track())
+        await self.handle_next_track()
 
     async def _previous_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        self._schedule_command(self.handle_previous_track())
+        await self.handle_previous_track()
 
     async def _volume_set_callback(
         self, _player: MediaPlayer, volume: float, _message: Message
     ) -> None:
-        self._schedule_command(self.handle_volume_set(volume))
+        await self.handle_volume_set(volume)
 
     async def _volume_mute_callback(
         self, _player: MediaPlayer, muted: bool, _message: Message
     ) -> None:
-        self._schedule_command(self.handle_volume_mute(muted))
+        await self.handle_volume_mute(muted)
 
     async def _seek_callback(
         self, _player: MediaPlayer, position_seconds: float, _message: Message
     ) -> None:
-        self._schedule_command(self.handle_seek(position_seconds))
+        await self.handle_seek(position_seconds)
 
     async def _read_snapshot(self) -> MediaSnapshot:
         playback_status = cast(str, await _await_property(self.player.playback_status))
@@ -327,7 +309,7 @@ class AsyncMprisMediaPlayerBridge:
             await self._handle_name_owner_changed(new_owner)
 
     async def _publish_position_while_playing(self) -> None:
-        while not self._stopped:
+        while True:
             await asyncio.sleep(self.position_poll_seconds)
             snapshot = self._last_snapshot
             if snapshot is None or snapshot.state != "playing":
@@ -371,50 +353,13 @@ class AsyncMprisMediaPlayerBridge:
         self._last_snapshot = None
         await self.media_player.set_available(False)
 
-    def _schedule_command(self, awaitable: Coroutine[object, object, None]) -> None:
-        task: asyncio.Task[None] = asyncio.create_task(awaitable)
-        self._command_tasks.add(task)
-        task.add_done_callback(self._command_task_done)
-
-    def _command_task_done(self, task: asyncio.Task[None]) -> None:
-        self._command_tasks.discard(task)
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            pass
-        except Exception as error:
-            self._mark_failed(error)
-            LOGGER.exception("MQTT command task failed")
-
-    def _track_task(
-        self, awaitable: Coroutine[object, object, None]
-    ) -> asyncio.Task[None]:
-        task: asyncio.Task[None] = asyncio.create_task(awaitable)
-        task.add_done_callback(self._observer_task_done)
-        return task
-
-    def _observer_task_done(self, task: asyncio.Task[None]) -> None:
-        self._tasks.discard(task)
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            pass
-        except Exception as error:
-            self._mark_failed(error)
-            LOGGER.exception("MPRIS observer task failed")
-
-    def _mark_failed(self, error: Exception) -> None:
-        if self._failure is None:
-            self._failure = error
-        _ = self._failure_event.set()
-
     def _update_last_nonzero_volume(self, volume: float) -> None:
         if volume > 0.0:
             self._last_nonzero_volume = volume
 
 
 def create_bridge(
-    session: MqttSession,
+    session: SessionLike,
     entity: MediaPlayerInfo,
     *,
     service_name: str = PLAYERCTLD_SERVICE_NAME,
