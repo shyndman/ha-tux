@@ -56,7 +56,7 @@ wheels = [
 [[package]]
 name = "ha-mqtt-discoverable"
 version = "1.0.0"
-source = { git = "https://github.com/shyndman/ha-mqtt-discoverable?branch=feat%2Fsupervisable-session#8864f205891e2a311a48c599d300937b455f284d" }
+source = { git = "https://github.com/shyndman/ha-mqtt-discoverable?branch=feat%2Fsupervisable-session#891e0704e4d6948faf4184adc13704c1cffba9d2" }
 dependencies = [
     { name = "aiomqtt" },
     { name = "gitlike-commands" },
