@@ -4,8 +4,8 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import final
 
+from ha_tux.foundation.subprocesses import CommandResult
 from ha_tux.software_update.gist import GistResult, publish_gist, publish_shortlink
-from ha_tux.software_update.runner import CommandResult
 
 
 @final

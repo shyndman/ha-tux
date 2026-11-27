@@ -1,4 +1,4 @@
-"""Command-execution seam and live asyncio subprocess adapter for ``software_update``."""
+"""Async subprocess command runner seam and live adapter."""
 
 from __future__ import annotations
 
@@ -6,6 +6,12 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
+
+__all__ = [
+    "CommandResult",
+    "CommandRunner",
+    "subprocess_runner",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +24,7 @@ class CommandResult:
 
 
 class CommandRunner(Protocol):
-    """Seam for executing external ``apt``, ``brew``, ``gh``, ``chhoto``, and ``systemctl`` commands."""
+    """Seam for executing external subprocesses and capturing output."""
 
     async def __call__(
         self,

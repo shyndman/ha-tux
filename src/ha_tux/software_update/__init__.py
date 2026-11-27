@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+from ha_tux.foundation.subprocesses import CommandRunner, subprocess_runner
 from ha_tux.runtime import SessionContext, run_poller
 from ha_tux.software_update.detect import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
 from ha_tux.software_update.publisher import (
     TodayFn,
     build_software_update_publisher,
 )
-from ha_tux.software_update.runner import CommandRunner, subprocess_runner
 from ha_tux.software_update.state import StateStore, state_file_path
 
 __all__ = [

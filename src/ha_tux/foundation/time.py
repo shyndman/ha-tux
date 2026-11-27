@@ -1,7 +1,8 @@
-"""Time unit conversion helpers."""
+"""Time unit conversion and ISO date parsing helpers."""
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Final
 
 MILLISECONDS_PER_SECOND: Final = 1000
@@ -11,6 +12,7 @@ __all__ = [
     "MICROSECONDS_PER_SECOND",
     "MILLISECONDS_PER_SECOND",
     "microseconds_to_seconds",
+    "parse_iso_date",
     "seconds_to_microseconds",
     "seconds_to_milliseconds",
 ]
@@ -38,3 +40,13 @@ def seconds_to_microseconds(value_seconds: float) -> int:
         raise ValueError("Seconds must be non-negative")
 
     return int(value_seconds * MICROSECONDS_PER_SECOND)
+
+
+def parse_iso_date(value: str | None) -> date | None:
+    """Parse an ISO ``YYYY-MM-DD`` date string, returning ``None`` if absent or invalid."""
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
