@@ -11,8 +11,8 @@ from ha_mqtt_discoverable.media_player import (
     MediaPlayerCallbacks,
     MediaPlayerInfo,
 )
+from sdbus_async.dbus_daemon import FreedesktopDbus
 
-from ha_tux.dbus import DbusDaemonAsync, new_dbus_daemon_proxy
 from ha_tux.mpris.album_art import (
     AlbumArtPayload,
     AlbumArtResolver,
@@ -69,14 +69,14 @@ class AsyncMprisMediaPlayerBridge:
         self,
         *,
         player: MprisPlayerAsync,
-        dbus: DbusDaemonAsync,
+        dbus: FreedesktopDbus,
         media_player: MediaPlayerPublisher,
         album_art_resolver: AlbumArtResolver,
         service_name: str = PLAYERCTLD_SERVICE_NAME,
         position_poll_seconds: float = DEFAULT_POSITION_POLL_SECONDS,
     ) -> None:
         self.player: MprisPlayerAsync = player
-        self.dbus: DbusDaemonAsync = dbus
+        self.dbus: FreedesktopDbus = dbus
         self.media_player: MediaPlayerPublisher = media_player
         self.album_art_resolver: AlbumArtResolver = album_art_resolver
         self.service_name: str = service_name
@@ -365,7 +365,7 @@ def create_bridge(
     position_poll_seconds: float = DEFAULT_POSITION_POLL_SECONDS,
 ) -> AsyncMprisMediaPlayerBridge:
     player = new_mpris_player_proxy(service_name)
-    dbus = new_dbus_daemon_proxy()
+    dbus = FreedesktopDbus()
     resolver = AlbumArtResolver()
     placeholder = PlaceholderPublisher()
     bridge = AsyncMprisMediaPlayerBridge(
