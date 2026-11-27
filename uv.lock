@@ -56,7 +56,7 @@ wheels = [
 [[package]]
 name = "ha-mqtt-discoverable"
 version = "1.0.0"
-source = { git = "https://github.com/shyndman/ha-mqtt-discoverable?branch=feat%2Fsupervisable-session#891e0704e4d6948faf4184adc13704c1cffba9d2" }
+source = { git = "https://github.com/shyndman/ha-mqtt-discoverable#e3f17510825dce53863593a007084b4710674e87" }
 dependencies = [
     { name = "aiomqtt" },
     { name = "gitlike-commands" },
@@ -90,7 +90,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiomqtt", specifier = ">=2.5.1" },
-    { name = "ha-mqtt-discoverable", git = "https://github.com/shyndman/ha-mqtt-discoverable?branch=feat%2Fsupervisable-session" },
+    { name = "ha-mqtt-discoverable", git = "https://github.com/shyndman/ha-mqtt-discoverable" },
     { name = "libsh", specifier = ">=0.2.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "sdbus", specifier = ">=0.14.2" },
