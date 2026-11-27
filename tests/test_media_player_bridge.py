@@ -14,10 +14,10 @@ from ha_mqtt_discoverable import DeviceInfo
 from structlog.testing import capture_logs
 
 from ha_tux.config import HaTuxConfig
+from ha_tux.foundation.time import MICROSECONDS_PER_SECOND
 from ha_tux.mpris import MprisBridge, PLAYERCTLD_SERVICE_NAME, run_mpris
 from ha_tux.mpris.album_art import AlbumArtResolver
 from ha_tux.mpris.player import (
-    MICROSECONDS_PER_SECOND,
     MPRIS_PLAYER_INTERFACE,
     MetadataMap,
     MprisPlayer,
@@ -232,7 +232,9 @@ def test_snapshot_logs_album_art_payload_size_without_raw_data_uri(
 
         expected_url = f"data:image/png;base64,{b64encode(png_bytes).decode('ascii')}"
         art_logs = [
-            entry for entry in logs if entry.get("event") == "mpris_album_art_published"
+            entry
+            for entry in logs
+            if entry.get("event") == "Publishing MPRIS album art payload"
         ]
         assert len(art_logs) == 1
         assert cast(int, art_logs[0]["album_art_payload_bytes"]) == len(expected_url)
@@ -399,7 +401,7 @@ def test_no_active_player_snapshot_clears_state_and_stops_polling() -> None:
                 await task
 
         no_player_logs = [
-            entry for entry in logs if entry.get("event") == "mpris_no_active_player"
+            entry for entry in logs if entry.get("event") == "No active MPRIS player"
         ]
         assert len(no_player_logs) == 1
         assert no_player_logs[0].get("log_level") == "info"
@@ -431,7 +433,8 @@ def test_no_active_player_during_position_poll_marks_unavailable() -> None:
         poll_logs = [
             entry
             for entry in logs
-            if entry.get("event") == "mpris_no_active_player_during_position_poll"
+            if entry.get("event")
+            == "No active MPRIS player while polling playback position"
         ]
         assert len(poll_logs) == 1
         assert poll_logs[0].get("log_level") == "info"

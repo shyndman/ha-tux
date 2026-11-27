@@ -5,9 +5,13 @@ from __future__ import annotations
 from typing import Final
 
 MILLISECONDS_PER_SECOND: Final = 1000
+MICROSECONDS_PER_SECOND: Final = 1_000_000
 
 __all__ = [
+    "MICROSECONDS_PER_SECOND",
     "MILLISECONDS_PER_SECOND",
+    "microseconds_to_seconds",
+    "seconds_to_microseconds",
     "seconds_to_milliseconds",
 ]
 
@@ -18,3 +22,19 @@ def seconds_to_milliseconds(value_seconds: float) -> int:
         raise ValueError("Seconds must be non-negative")
 
     return int(value_seconds * MILLISECONDS_PER_SECOND)
+
+
+def microseconds_to_seconds(value_us: int) -> int:
+    """Convert microsecond timestamps into non-negative whole seconds."""
+    if value_us <= 0:
+        return 0
+
+    return value_us // MICROSECONDS_PER_SECOND
+
+
+def seconds_to_microseconds(value_seconds: float) -> int:
+    """Convert non-negative seconds into integer microseconds."""
+    if value_seconds < 0:
+        raise ValueError("Seconds must be non-negative")
+
+    return int(value_seconds * MICROSECONDS_PER_SECOND)

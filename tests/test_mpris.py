@@ -1,7 +1,7 @@
 import pytest
 
+from ha_tux.foundation.time import MICROSECONDS_PER_SECOND
 from ha_tux.mpris.player import (
-    MICROSECONDS_PER_SECOND,
     MPRIS_NO_TRACK_PATH,
     MetadataMap,
     artist_text_from_metadata,
@@ -9,9 +9,7 @@ from ha_tux.mpris.player import (
     metadata_int,
     metadata_string,
     metadata_string_list,
-    microseconds_to_seconds,
     mpris_status_to_ha_state,
-    seconds_to_microseconds,
     track_id_from_metadata,
 )
 
@@ -58,11 +56,3 @@ def test_metadata_helpers_reject_wrong_signatures() -> None:
     assert metadata_int(metadata, "mpris:length") is None
     assert duration_seconds_from_metadata(metadata) == 0
     assert track_id_from_metadata(metadata) is None
-
-
-def test_time_conversion_helpers() -> None:
-    assert microseconds_to_seconds(1_999_999) == 1
-    assert microseconds_to_seconds(-1) == 0
-    assert seconds_to_microseconds(1.25) == 1_250_000
-    with pytest.raises(ValueError, match="Seconds must be non-negative"):
-        _ = seconds_to_microseconds(-1)
