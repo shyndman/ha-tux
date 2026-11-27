@@ -225,7 +225,7 @@ _MANAGER_SPECS: tuple[_ManagerSpec, ...] = (
         "apt",
         "apt",
         APT_UPGRADE_UNIT,
-        lambda exe, runner: query_apt(exe, runner=runner),
+        lambda _exe, runner: query_apt(runner=runner),
     ),
     _ManagerSpec(
         "brew",

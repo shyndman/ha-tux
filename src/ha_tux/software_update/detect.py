@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import re
-import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -22,26 +19,23 @@ from ha_tux.foundation.subprocesses import CommandRunner, subprocess_runner
 LOGGER = get_logger(__name__)
 
 __all__ = [
-    "APT_CHECK_PATH",
-    "APT_NEVER_PHASED_OPT",
+    "APT_PROBE_SCRIPT",
     "APT_UPGRADE_UNIT",
     "BREW_UPGRADE_UNIT",
     "DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS",
     "REBOOT_REQUIRED_PATH",
     "REBOOT_REQUIRED_PKGS_PATH",
-    "SYSTEMCTL_PATH",
     "SENTINEL_DATE",
     "SURFACE_COOLDOWN_DAYS",
+    "SYSTEMCTL_PATH",
+    "SYSTEM_PYTHON_PATH",
     "PackageUpdate",
     "SurfaceDecision",
     "UpdateReport",
     "decide_surface",
     "entity_title",
     "gist_body",
-    "parse_apt_check",
-    "parse_apt_download_bytes",
-    "parse_apt_installable",
-    "parse_apt_upgradable",
+    "parse_apt_probe",
     "parse_brew_outdated",
     "query_apt",
     "query_brew",
@@ -52,32 +46,35 @@ __all__ = [
 
 SURFACE_COOLDOWN_DAYS: Final = 2
 SENTINEL_DATE: Final = "1970-01-01"
-APT_CHECK_PATH: Final = "/usr/lib/update-notifier/apt-check"
+SYSTEM_PYTHON_PATH: Final = "/usr/bin/python3"
 SYSTEMCTL_PATH: Final = "/usr/bin/systemctl"
 APT_UPGRADE_UNIT: Final = "ha-tux-apt-upgrade.service"
 BREW_UPGRADE_UNIT: Final = "ha-tux-brew-upgrade.service"
 REBOOT_REQUIRED_PATH: Final = "/run/reboot-required"
 REBOOT_REQUIRED_PKGS_PATH: Final = "/run/reboot-required.pkgs"
-# The host service runs in a systemd sandbox (ProtectHome/PrivateTmp/namespaces)
-# where ischroot(1) returns true, so apt disables phased-update deferral and the
-# simulation lists phased packages that the unsandboxed root `apt-get upgrade`
-# (ha-tux-apt-upgrade.service) would NOT install. Forcing deferral keeps the
-# simulation's Inst lines in parity with what the Install button actually does.
-APT_NEVER_PHASED_OPT: Final = "APT::Get::Never-Include-Phased-Updates=true"
 
-_UPGRADABLE_RE: Final = re.compile(
-    r"^(\S+?)/\S+\s+(\S+)\s+\S+\s+\[upgradable from:\s*(\S+)\]"
-)
-_APT_CHECK_RE: Final = re.compile(r"(\d+);(\d+)")
-_DOWNLOAD_RE: Final = re.compile(r"Need to get\s+([\d.,]+)\s*([kKMG]?B)")
-_APT_INST_RE: Final = re.compile(r"^Inst\s+(\S+)", re.MULTILINE)
-_UNIT_FACTORS: Final = {
-    "B": 1,
-    "kB": 1024,
-    "KB": 1024,
-    "MB": 1024**2,
-    "GB": 1024**3,
-}
+# The updates service runs in a systemd sandbox (ProtectHome/PrivateTmp/namespaces)
+# where ischroot(1) returns true, so apt disables phased-update deferral unless
+# forced. Keeping Never-Include-Phased-Updates=true matches what the unsandboxed
+# root `apt-get upgrade` unit (ha-tux-apt-upgrade.service) will actually install.
+APT_PROBE_SCRIPT: Final = """\
+import json, apt, apt_pkg
+apt_pkg.config.set("APT::Get::Never-Include-Phased-Updates", "true")
+cache = apt.Cache()
+cache.upgrade(dist_upgrade=False)
+packages = [
+    {
+        "name": pkg.name,
+        "installed": pkg.installed.version,
+        "available": pkg.candidate.version,
+        "security": any(o.archive.endswith("-security") for o in pkg.candidate.origins),
+    }
+    for pkg in cache.get_changes()
+    if pkg.marked_upgrade and pkg.installed is not None and pkg.candidate is not None
+]
+packages.sort(key=lambda p: p["name"])
+print(json.dumps({"packages": packages, "download_bytes": cache.required_download}))
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,48 +99,35 @@ class UpdateReport:
     pinned: int | None = None  # brew only
 
 
-def parse_apt_upgradable(stdout: str) -> tuple[PackageUpdate, ...]:
-    """Parse ``apt list --upgradable`` output into ``PackageUpdate`` entries."""
-    packages: list[PackageUpdate] = []
-    for raw in stdout.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("Listing"):
-            continue
-        match = _UPGRADABLE_RE.match(line)
-        if match is None:
-            continue
-        name, available, installed = match.group(1), match.group(2), match.group(3)
-        packages.append(
-            PackageUpdate(name=name, installed=installed, available=available)
+class _AptPackagePayload(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    name: str
+    installed: str
+    available: str
+    security: bool
+
+
+class _AptProbePayload(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    packages: tuple[_AptPackagePayload, ...]
+    download_bytes: int
+
+
+def parse_apt_probe(raw_json: str) -> tuple[tuple[PackageUpdate, ...], int, int]:
+    """Validate and unpack JSON emitted by ``APT_PROBE_SCRIPT``."""
+    data = _AptProbePayload.model_validate_json(raw_json)
+    packages = tuple(
+        PackageUpdate(
+            name=pkg.name,
+            installed=pkg.installed,
+            available=pkg.available,
         )
-    return tuple(packages)
-
-
-def parse_apt_check(stderr: str) -> int | None:
-    """Extract security update count from ``apt-check`` stderr."""
-    match = _APT_CHECK_RE.search(stderr)
-    if match is None:
-        return None
-    return int(match.group(2))
-
-
-def parse_apt_download_bytes(sim_stdout: str) -> int | None:
-    """Extract estimated download size from simulated ``apt-get upgrade`` output."""
-    match = _DOWNLOAD_RE.search(sim_stdout)
-    if match is None:
-        return None
-    number = float(match.group(1).replace(",", ""))
-    factor = _UNIT_FACTORS.get(match.group(2), 1)
-    return int(number * factor)
-
-
-def parse_apt_installable(sim_stdout: str) -> frozenset[str]:
-    """Package names ``apt-get upgrade`` will actually install (its ``Inst`` lines).
-
-    Excludes phased ("deferred due to phasing") and kept-back packages, which
-    appear in ``apt list --upgradable`` but are not upgraded by plain ``upgrade``.
-    """
-    return frozenset(_APT_INST_RE.findall(sim_stdout))
+        for pkg in data.packages
+    )
+    security = sum(1 for pkg in data.packages if pkg.security)
+    return packages, security, data.download_bytes
 
 
 def read_reboot_required(
@@ -174,23 +158,31 @@ def read_reboot_required(
     return (True, pkg)
 
 
-class _BrewEntry(BaseModel):
+class _BrewFormula(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
 
-    name: str = ""
-    installed_versions: list[str] = []
-    current_version: str = ""
-    pinned: bool = False
+    name: str
+    installed_versions: list[str]
+    current_version: str
+    pinned: bool
+
+
+class _BrewCask(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
+
+    name: str
+    installed_versions: list[str]
+    current_version: str
 
 
 class _BrewOutdated(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
 
-    formulae: list[_BrewEntry] = []
-    casks: list[_BrewEntry] = []
+    formulae: list[_BrewFormula]
+    casks: list[_BrewCask]
 
 
-def _brew_package(entry: _BrewEntry, pinned: bool) -> PackageUpdate:
+def _brew_package(entry: _BrewFormula | _BrewCask, pinned: bool) -> PackageUpdate:
     return PackageUpdate(
         name=entry.name,
         installed=", ".join(entry.installed_versions),
@@ -215,41 +207,28 @@ def parse_brew_outdated(
 
 
 async def query_apt(
-    apt_get: str,
     *,
     runner: CommandRunner = subprocess_runner,
-    apt_path: str | None = None,
-    apt_check_path: Path | None = None,
+    python_path: str = SYSTEM_PYTHON_PATH,
     reboot_required_path: Path | None = None,
     reboot_pkgs_path: Path | None = None,
 ) -> UpdateReport:
-    """Query pending non-phased ``apt`` updates via ``runner``."""
-    apt = apt_path if apt_path is not None else (shutil.which("apt") or apt_get)
-    check_path = apt_check_path if apt_check_path is not None else Path(APT_CHECK_PATH)
-    env = {**os.environ, "LC_ALL": "C"}
+    """Query pending non-phased ``apt`` updates via system ``python3-apt``."""
+    result = await runner([python_path, "-c", APT_PROBE_SCRIPT])
+    if result.returncode != 0:
+        raise RuntimeError(f"python3-apt probe failed: {result.stderr.strip()}")
 
-    list_result = await runner([apt, "list", "--upgradable"], env=env)
-    if list_result.returncode != 0:
-        raise RuntimeError(
-            f"apt list --upgradable failed: {list_result.stderr.strip()}"
-        )
-
-    packages = parse_apt_upgradable(list_result.stdout)
-    security: int | None = None
-    if check_path.exists():
-        check_result = await runner([str(check_path)], env=env)
-        security = parse_apt_check(check_result.stderr)
-
-    sim_result = await runner(
-        [apt_get, "-s", "-o", APT_NEVER_PHASED_OPT, "upgrade"], env=env
-    )
-    if sim_result.returncode == 0:
-        installable = parse_apt_installable(sim_result.stdout)
-        packages = tuple(pkg for pkg in packages if pkg.name in installable)
-
+    packages, security, download_bytes = parse_apt_probe(result.stdout)
     reboot_required, reboot_pkg = read_reboot_required(
         reboot_required_path=reboot_required_path,
         reboot_pkgs_path=reboot_pkgs_path,
+    )
+    LOGGER.debug(
+        "Queried pending apt updates",
+        count=len(packages),
+        security=security,
+        download_bytes=download_bytes,
+        reboot_required=reboot_required,
     )
     return UpdateReport(
         manager="apt",
@@ -257,7 +236,7 @@ async def query_apt(
         count=len(packages),
         packages=packages,
         security=security,
-        download_bytes=parse_apt_download_bytes(sim_result.stdout),
+        download_bytes=download_bytes,
         reboot_required=reboot_required,
         reboot_pkg=reboot_pkg,
     )
