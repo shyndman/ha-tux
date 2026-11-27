@@ -9,9 +9,9 @@ from typing import cast
 
 from ha_mqtt_discoverable import DeviceInfo
 
+from ha_tux.foundation.subprocesses import CommandResult
 from ha_tux.software_update.detect import PackageUpdate, UpdateReport
 from ha_tux.software_update.publisher import ManagerPublisher
-from ha_tux.software_update.runner import CommandResult
 from ha_tux.software_update.state import StateStore
 from tests.fakes import InMemorySession
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,6 +11,8 @@ from typing import Final, cast, final
 
 from libsh import get_logger
 from xdg_base_dirs import xdg_state_home
+
+from ha_tux.foundation.files import atomic_write_text
 
 LOGGER = get_logger(__name__)
 
@@ -78,7 +79,10 @@ class StateStore:
         try:
             raw = path.read_bytes()
         except FileNotFoundError:
-            LOGGER.debug("software_update_state_absent", path=os.fspath(path))
+            LOGGER.debug(
+                "Software update state file absent; starting with empty state",
+                path=os.fspath(path),
+            )
             return cls(path, data)
 
         parsed = cast(dict[str, object], tomllib.loads(raw.decode()))
@@ -94,7 +98,7 @@ class StateStore:
                 pending_set=_opt_str_tuple(table_map.get("pending_set")),
             )
         LOGGER.debug(
-            "software_update_state_loaded",
+            "Loaded software update state",
             path=os.fspath(path),
             managers=sorted(data),
         )
@@ -109,31 +113,9 @@ class StateStore:
         self._data[manager] = state
 
     def save(self) -> None:
-        """Atomically write the full store to disk via temp file, fsync, and replace."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = _dump_toml(self._data)
-        tmp_path: Path | None = None
-
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self._path.parent,
-                prefix=f".{self._path.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as tmp:
-                tmp_path = Path(tmp.name)
-                _ = tmp.write(payload)
-                tmp.flush()
-                os.fsync(tmp.fileno())
-            os.replace(tmp_path, self._path)
-            tmp_path = None
-        finally:
-            if tmp_path is not None and tmp_path.exists():
-                tmp_path.unlink()
-
-        LOGGER.debug("software_update_state_saved", path=os.fspath(self._path))
+        """Atomically persist the store to disk."""
+        atomic_write_text(self._path, _dump_toml(self._data))
+        LOGGER.debug("Saved software update state", path=os.fspath(self._path))
 
 
 def _opt_str(value: object) -> str | None:

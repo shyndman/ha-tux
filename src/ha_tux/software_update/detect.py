@@ -16,7 +16,8 @@ from libsh import get_logger
 from pydantic import BaseModel, ConfigDict
 
 from ha_tux.config import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
-from ha_tux.software_update.runner import CommandRunner, subprocess_runner
+from ha_tux.foundation.strings import human_bytes, plural_suffix
+from ha_tux.foundation.subprocesses import CommandRunner, subprocess_runner
 
 LOGGER = get_logger(__name__)
 
@@ -37,7 +38,6 @@ __all__ = [
     "decide_surface",
     "entity_title",
     "gist_body",
-    "human_bytes",
     "parse_apt_check",
     "parse_apt_download_bytes",
     "parse_apt_installable",
@@ -47,7 +47,6 @@ __all__ = [
     "query_brew",
     "read_reboot_required",
     "release_summary",
-    "slugify",
     "status_word",
 ]
 
@@ -72,7 +71,6 @@ _UPGRADABLE_RE: Final = re.compile(
 _APT_CHECK_RE: Final = re.compile(r"(\d+);(\d+)")
 _DOWNLOAD_RE: Final = re.compile(r"Need to get\s+([\d.,]+)\s*([kKMG]?B)")
 _APT_INST_RE: Final = re.compile(r"^Inst\s+(\S+)", re.MULTILINE)
-_SLUG_RE: Final = re.compile(r"[^a-z0-9]+")
 _UNIT_FACTORS: Final = {
     "B": 1,
     "kB": 1024,
@@ -271,7 +269,10 @@ async def query_brew(
     """Refresh Homebrew metadata and query outdated formulae and casks via ``runner``."""
     update_result = await runner([brew, "update", "--quiet"])
     if update_result.returncode != 0:
-        LOGGER.warning("brew_update_failed", error=update_result.stderr.strip())
+        LOGGER.warning(
+            "Homebrew metadata refresh failed; continuing with local cache",
+            error=update_result.stderr.strip(),
+        )
 
     outdated_result = await runner([brew, "outdated", "--json=v2"])
     if outdated_result.returncode != 0:
@@ -353,23 +354,8 @@ def decide_surface(
     )
 
 
-def human_bytes(n: int) -> str:
-    value = float(n)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if value < 1024 or unit == "TB":
-            if unit == "B":
-                return f"{int(value)} {unit}"
-            return f"{value:.0f} {unit}" if value >= 10 else f"{value:.1f} {unit}"
-        value /= 1024.0
-    return f"{value:.0f} TB"
-
-
-def _plural(count: int) -> str:
-    return "" if count == 1 else "s"
-
-
 def _apt_summary(report: UpdateReport) -> str:
-    first = f"{report.count} Update{_plural(report.count)}"
+    first = f"{report.count} Update{plural_suffix(report.count)}"
     if report.security is not None and report.security > 0:
         first += f" · {report.security} Security"
     lines = [first]
@@ -386,8 +372,8 @@ def _apt_summary(report: UpdateReport) -> str:
 def _brew_summary(report: UpdateReport) -> str:
     casks = report.casks or 0
     pinned = report.pinned or 0
-    first = f"{report.count} Update{_plural(report.count)}"
-    second = f"{casks} Cask{_plural(casks)} · {pinned} Pinned"
+    first = f"{report.count} Update{plural_suffix(report.count)}"
+    second = f"{casks} Cask{plural_suffix(casks)} · {pinned} Pinned"
     return "  \n".join([first, second])
 
 
@@ -425,7 +411,3 @@ def gist_body(report: UpdateReport, hostname: str, refresh: str) -> str:
         rows.append(f"| {name} | {pkg.installed} | {pkg.available} |")
     table = "\n".join(rows)
     return f"{heading}\n\n{_gist_summary_line(report, refresh)}\n\n{table}\n"
-
-
-def slugify(value: str) -> str:
-    return _SLUG_RE.sub("-", value.lower()).strip("-")

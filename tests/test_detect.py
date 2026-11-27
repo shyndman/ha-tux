@@ -6,6 +6,7 @@ from datetime import date
 import json
 from pathlib import Path
 
+from ha_tux.foundation.subprocesses import CommandResult
 from ha_tux.software_update.detect import (
     SENTINEL_DATE,
     PackageUpdate,
@@ -13,7 +14,6 @@ from ha_tux.software_update.detect import (
     UpdateReport,
     decide_surface,
     entity_title,
-    human_bytes,
     parse_apt_check,
     parse_apt_download_bytes,
     parse_apt_installable,
@@ -24,7 +24,6 @@ from ha_tux.software_update.detect import (
     release_summary,
     status_word,
 )
-from ha_tux.software_update.runner import CommandResult
 
 APT_UPGRADABLE = """Listing... Done
 bash/stable 5.2.21-2 amd64 [upgradable from: 5.2.21-1]
@@ -120,12 +119,6 @@ def test_parse_brew_outdated_excludes_pinned() -> None:
     assert firefox.pinned is False
     # count = len(packages) - pinned excludes the pinned formula
     assert len(packages) - pinned == 2
-
-
-def test_human_bytes() -> None:
-    assert human_bytes(88080384) == "84 MB"
-    assert human_bytes(512) == "512 B"
-    assert human_bytes(5 * 1024 * 1024) == "5.0 MB"  # below 10 -> 1 decimal
 
 
 def test_status_word() -> None:

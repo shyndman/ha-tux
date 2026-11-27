@@ -10,7 +10,7 @@ from typing import Final
 
 from libsh import get_logger
 
-from ha_tux.software_update.runner import CommandRunner, subprocess_runner
+from ha_tux.foundation.subprocesses import CommandRunner, subprocess_runner
 
 LOGGER = get_logger(__name__)
 
@@ -39,13 +39,19 @@ async def _create_gist(
 ) -> GistResult | None:
     result = await runner(["gh", "gist", "create", "--desc", description, str(tmpfile)])
     if result.returncode != 0:
-        LOGGER.info("gist_create_failed", manager=manager, error=result.stderr.strip())
+        LOGGER.info(
+            "Failed to create update summary gist",
+            manager=manager,
+            error=result.stderr.strip(),
+        )
         return None
 
     match = _GIST_URL_PATTERN.search(result.stdout)
     if match is None:
         LOGGER.info(
-            "gist_create_missing_url", manager=manager, output=result.stdout.strip()
+            "GitHub CLI did not return a gist URL",
+            manager=manager,
+            output=result.stdout.strip(),
         )
         return None
 
@@ -65,7 +71,7 @@ async def _edit_gist(
     )
     if result.returncode != 0:
         LOGGER.info(
-            "gist_edit_failed",
+            "Failed to update existing gist",
             manager=manager,
             gist_id=gist_id,
             error=result.stderr.strip(),
@@ -106,7 +112,11 @@ async def publish_gist(
                 runner=runner,
             )
     except Exception as error:
-        LOGGER.info("gist_publish_error", manager=manager, error=str(error))
+        LOGGER.info(
+            "Unexpected error while publishing update gist",
+            manager=manager,
+            error=str(error),
+        )
         return None
 
 
@@ -123,7 +133,7 @@ async def chhoto_site_url(*, runner: CommandRunner = subprocess_runner) -> str |
 
         return match.group(1)
     except Exception as error:
-        LOGGER.info("chhoto_getconfig_error", error=str(error))
+        LOGGER.info("Failed to read chhoto configuration", error=str(error))
         return None
 
 
@@ -147,7 +157,7 @@ async def publish_shortlink(
             result = await runner(["chhoto", "new", gist_url, slug])
             if result.returncode != 0:
                 LOGGER.info(
-                    "chhoto_new_failed",
+                    "Failed to create chhoto shortlink after retry",
                     slug=slug,
                     error=result.stderr.strip(),
                 )
@@ -155,5 +165,9 @@ async def publish_shortlink(
 
         return f"{base}/{slug}"
     except Exception as error:
-        LOGGER.info("chhoto_publish_error", slug=slug, error=str(error))
+        LOGGER.info(
+            "Unexpected error while publishing chhoto shortlink",
+            slug=slug,
+            error=str(error),
+        )
         return None

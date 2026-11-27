@@ -13,6 +13,9 @@ from ha_mqtt_discoverable import DeviceInfo, SessionLike
 from ha_mqtt_discoverable.sensors import Update, UpdateInfo
 from libsh import get_logger
 
+from ha_tux.foundation.strings import slugify
+from ha_tux.foundation.subprocesses import CommandRunner, subprocess_runner
+from ha_tux.foundation.time import parse_iso_date
 from ha_tux.host_device import host_slug
 from ha_tux.software_update.detect import (
     APT_UPGRADE_UNIT,
@@ -27,24 +30,13 @@ from ha_tux.software_update.detect import (
     query_apt,
     query_brew,
     release_summary,
-    slugify,
 )
 from ha_tux.software_update.gist import publish_gist, publish_shortlink
-from ha_tux.software_update.runner import CommandRunner, subprocess_runner
 from ha_tux.software_update.state import ManagerState, StateStore
 
 LOGGER = get_logger(__name__)
 
 TodayFn = Callable[[], date]
-
-
-def _parse_date(value: str | None) -> date | None:
-    if value is None:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
 
 
 def _next_state(
@@ -145,7 +137,9 @@ class ManagerPublisher:
         try:
             report = await self.query()
         except Exception:
-            LOGGER.exception("software_update_query_failed", manager=self.manager)
+            LOGGER.exception(
+                "Failed to query pending software updates", manager=self.manager
+            )
             await self.entity.set_available(False)
             return
 
@@ -155,8 +149,8 @@ class ManagerPublisher:
         decision = decide_surface(
             current=current,
             previous=frozenset(previous.pending_set),
-            notify_anchor=_parse_date(previous.notify_anchor),
-            last_install_date=_parse_date(previous.last_install_date),
+            notify_anchor=parse_iso_date(previous.notify_anchor),
+            last_install_date=parse_iso_date(previous.last_install_date),
             today=today,
         )
         self._installed, self._latest = decision.installed, decision.latest
@@ -191,13 +185,13 @@ class ManagerPublisher:
             )
             result = await self._runner(self.install_cmd)
             LOGGER.info(
-                "software_update_install_finished",
+                "Software update install command finished",
                 manager=self.manager,
                 returncode=result.returncode,
             )
             if result.returncode != 0:
                 LOGGER.warning(
-                    "software_update_install_failed",
+                    "Software update install command exited with error",
                     manager=self.manager,
                     error=(result.stderr or result.stdout).strip(),
                 )
