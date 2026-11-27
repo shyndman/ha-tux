@@ -9,8 +9,8 @@ from typing import Generic, TypeVar, cast, override
 import pytest
 from aiomqtt import Message
 from ha_mqtt_discoverable.media_player import MediaPlayer
+from sdbus_async.dbus_daemon import FreedesktopDbus
 
-from ha_tux.dbus import DbusDaemonAsync
 from ha_tux.mpris.album_art import AlbumArtResolver
 from ha_tux.mpris.bridge import AsyncMprisMediaPlayerBridge
 from ha_tux.mpris.mpris import (
@@ -178,7 +178,7 @@ def build_bridge() -> tuple[
     dbus = FakeDbus()
     bridge = AsyncMprisMediaPlayerBridge(
         player=cast(MprisPlayerAsync, cast(object, player)),
-        dbus=cast(DbusDaemonAsync, cast(object, dbus)),
+        dbus=cast(FreedesktopDbus, cast(object, dbus)),
         media_player=media,
         album_art_resolver=AlbumArtResolver(),
         position_poll_seconds=0.01,

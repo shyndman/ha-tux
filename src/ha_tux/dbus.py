@@ -21,13 +21,11 @@ from typing import Final, Protocol, cast
 
 from libsh import get_logger
 from sdbus import (
-    DbusInterfaceCommonAsync,
-    dbus_method_async,
-    dbus_signal_async,
     get_default_bus,
     sd_bus_open_system,
 )
 from sdbus.sd_bus_internals import SdBus, SdBusMessage
+from sdbus_async.dbus_daemon import FreedesktopDbus
 
 from ha_tux.foundation.tasks import cancel_task, schedule_next
 
@@ -40,33 +38,6 @@ NAME_OWNER_CHANGED_SIGNAL: Final = "NameOwnerChanged"
 NameOwnerChanged = tuple[str, str, str]
 OnPresent = Callable[[], Coroutine[object, object, None]]
 OnAbsent = Callable[[], Awaitable[None]]
-
-
-class DbusDaemonAsync(
-    DbusInterfaceCommonAsync,
-    interface_name=DBUS_DAEMON_SERVICE_NAME,
-):
-    """Proxy for org.freedesktop.DBus ownership queries and change signals."""
-
-    @dbus_method_async("s", "b", method_name="NameHasOwner")
-    async def name_has_owner(self, _name: str) -> bool:
-        """Return whether ``_name`` currently has an active bus owner."""
-        raise NotImplementedError
-
-    @dbus_signal_async("sss", signal_name=NAME_OWNER_CHANGED_SIGNAL)
-    def name_owner_changed(self) -> NameOwnerChanged:
-        """Signal emitted with ``(name, old_owner, new_owner)`` on ownership change."""
-        raise NotImplementedError
-
-
-def new_dbus_daemon_proxy(bus: SdBus | None = None) -> DbusDaemonAsync:
-    """Create a ``DbusDaemonAsync`` proxy bound to ``bus`` or the session default."""
-    resolved_bus = bus if bus is not None else get_default_bus()
-    return DbusDaemonAsync.new_proxy(
-        DBUS_DAEMON_SERVICE_NAME,
-        DBUS_DAEMON_OBJECT_PATH,
-        bus=resolved_bus,
-    )
 
 
 class NameOwnerSource(Protocol):
@@ -89,7 +60,7 @@ class SdbusNameOwnerSource:
     def __init__(self, bus: SdBus | None = None) -> None:
         """Bind ownership queries and signal matches to ``bus``."""
         self._bus: SdBus = bus if bus is not None else get_default_bus()
-        self._daemon: DbusDaemonAsync = new_dbus_daemon_proxy(self._bus)
+        self._daemon: FreedesktopDbus = FreedesktopDbus(self._bus)
 
     async def name_has_owner(self, service_name: str) -> bool:
         """Query ``org.freedesktop.DBus.NameHasOwner`` on the bound bus."""
