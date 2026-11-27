@@ -19,23 +19,14 @@ from ha_tux.config import (
     parse_role,
 )
 from ha_tux.host_device import build_host_device_info, host_slug
-from ha_tux.input_active.entity import (
-    InputActivePublisher,
-    build_input_active_publisher,
-)
-from ha_tux.input_active.monitor import (
-    MILLISECONDS_PER_SECOND,
-    InputActiveWatcher,
-    new_idle_monitor_proxy,
-)
+from ha_tux.input_active import run_input_active
 from ha_tux.mpris.bridge import (
     DEFAULT_POSITION_POLL_SECONDS,
     AsyncMprisMediaPlayerBridge,
     create_bridge,
 )
 from ha_tux.mpris.entity import build_media_player_entity
-from ha_tux.power.entity import PowerPublisher, build_power_publisher
-from ha_tux.power.monitor import PowerWatcher, new_display_device_proxy
+from ha_tux.power import run_power
 from ha_tux.run_state import StateStore, state_file_path
 from ha_tux.runtime import (
     Feature,
@@ -44,7 +35,7 @@ from ha_tux.runtime import (
     mqtt_session_factory,
     run_poller,
 )
-from ha_tux.screen_lock.entity import LockPublisher, build_lock_publisher
+from ha_tux.screen_lock import run_screen_lock
 from ha_tux.smart.entity import build_smart_publisher
 from ha_tux.smart.report import SMART_REPORT_PATH
 from ha_tux.software_update.publisher import build_software_update_publisher
@@ -79,25 +70,6 @@ async def _run_media(ctx: SessionContext) -> None:
     await bridge.run()
 
 
-async def _run_input_active(ctx: SessionContext) -> None:
-    publisher: InputActivePublisher = build_input_active_publisher(
-        ctx.session, ctx.device, ctx.host_prefix
-    )
-    watcher = InputActiveWatcher(
-        monitor=new_idle_monitor_proxy(),
-        idle_timeout_ms=int(
-            ctx.config.input_active.idle_timeout_seconds * MILLISECONDS_PER_SECOND
-        ),
-        on_change=publisher.set_active,
-    )
-    await watcher.run()
-
-
-async def _run_lock(ctx: SessionContext) -> None:
-    lock: LockPublisher = build_lock_publisher(ctx.session, ctx.device, ctx.host_prefix)
-    await lock.announce()
-
-
 async def _run_zfs(ctx: SessionContext) -> None:
     pool_names = await discover_pool_names()
     publisher = build_zfs_pool_publisher(
@@ -125,17 +97,6 @@ async def _run_software_update(ctx: SessionContext) -> None:
     )
 
 
-async def _run_power(ctx: SessionContext) -> None:
-    publisher: PowerPublisher = build_power_publisher(
-        ctx.session, ctx.device, ctx.host_prefix
-    )
-    watcher = PowerWatcher(
-        device=new_display_device_proxy(),
-        on_change=publisher.update,
-    )
-    await watcher.run()
-
-
 async def _run_smart(ctx: SessionContext) -> None:
     host_identifier = ctx.device.identifiers
     if not isinstance(host_identifier, str):
@@ -157,11 +118,11 @@ _UPDATE_ROLES: frozenset[Role] = frozenset({"updates", "all"})
 
 FEATURES: tuple[Feature, ...] = (
     Feature("mpris", _SESSION_ROLES, _run_media),
-    Feature("input_active", _SESSION_ROLES, _run_input_active),
-    Feature("screen_lock", _SESSION_ROLES, _run_lock),
+    Feature("input_active", _SESSION_ROLES, run_input_active),
+    Feature("screen_lock", _SESSION_ROLES, run_screen_lock),
     Feature("zfs", _HOST_ROLES, _run_zfs),
     Feature("software_update", _UPDATE_ROLES, _run_software_update),
-    Feature("power", _HOST_ROLES, _run_power),
+    Feature("power", _HOST_ROLES, run_power),
     Feature("smart", _HOST_ROLES, _run_smart),
 )
 
