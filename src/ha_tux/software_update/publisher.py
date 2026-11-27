@@ -7,8 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import date
 
 import aiomqtt
-from ha_mqtt_discoverable import DeviceInfo
-from ha_mqtt_discoverable._session import SessionLike
+from ha_mqtt_discoverable import DeviceInfo, SessionLike
 from ha_mqtt_discoverable.sensors import Update, UpdateInfo
 
 from ha_tux.gist import publish_gist, publish_shortlink

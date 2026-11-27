@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Final
 
-from ha_mqtt_discoverable import DeviceInfo
-from ha_mqtt_discoverable._session import SessionLike
+from ha_mqtt_discoverable import DeviceInfo, SessionLike
 from ha_mqtt_discoverable.sensors import Sensor, SensorInfo
 
 from ha_tux.zfs.zpool import (
