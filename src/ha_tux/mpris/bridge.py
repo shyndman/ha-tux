@@ -8,7 +8,7 @@ commands and seek signals, and delegates player mechanics to ``MprisPlayer``.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Final, Literal
 
@@ -22,6 +22,7 @@ from ha_mqtt_discoverable.media_player import (
 from libsh import get_logger
 
 from ha_tux.dbus import NameOwnerSource, session_name_owner_source, watch_name
+from ha_tux.foundation.time import microseconds_to_seconds, seconds_to_microseconds
 from ha_tux.host_device import build_host_device_info
 from ha_tux.mpris.album_art import (
     AlbumArtPayload,
@@ -39,9 +40,7 @@ from ha_tux.mpris.player import (
     artist_text_from_metadata,
     duration_seconds_from_metadata,
     metadata_string,
-    microseconds_to_seconds,
     mpris_status_to_ha_state,
-    seconds_to_microseconds,
     track_id_from_metadata,
 )
 from ha_tux.runtime import SessionContext
@@ -129,7 +128,9 @@ class MprisBridge:
 
     async def run(self) -> None:
         """Watch ``service_name`` ownership and supervise attached player tasks."""
-        LOGGER.info("mpris_bridge_started", service_name=self._service_name)
+        LOGGER.info(
+            "Starting MPRIS media player bridge", service_name=self._service_name
+        )
         await watch_name(
             source=self._name_owner_source,
             service_name=self._service_name,
@@ -159,88 +160,96 @@ class MprisBridge:
         """Read current MPRIS state and publish only fields that changed."""
         player = self._player
         if player is None:
-            LOGGER.debug("mpris_snapshot_skipped_no_owner", reason=reason)
+            LOGGER.debug(
+                "Skipping MPRIS snapshot while no D-Bus owner is attached",
+                reason=reason,
+            )
             return
 
         try:
             snapshot = await self._read_snapshot(player)
         except PlayerctldNoActivePlayerError:
-            LOGGER.info("mpris_no_active_player", reason=reason)
+            LOGGER.info("No active MPRIS player", reason=reason)
             await self._mark_unavailable()
             return
         except Exception:
-            LOGGER.exception("mpris_snapshot_read_failed", reason=reason)
+            LOGGER.exception("Failed to read MPRIS player snapshot", reason=reason)
             await self._mark_unavailable()
             return
 
         await self._media_player.set_available(True)
         await self._publish_snapshot(snapshot)
 
-    async def handle_play(self) -> None:
-        """Forward Home Assistant ``play`` command to the active MPRIS player."""
-        player = self._require_player("play")
+    async def _run_playback_command(
+        self,
+        *,
+        command: str,
+        reason: str,
+        is_supported: Callable[[MprisPlayer], Awaitable[bool]],
+        execute: Callable[[MprisPlayer], Awaitable[None]],
+    ) -> None:
+        player = self._require_player(command)
         if player is None:
             return
-        if not await player.get_can_play():
-            LOGGER.info("mpris_command_ignored", command="play", reason="cannot_play")
+        if not await is_supported(player):
+            LOGGER.info(
+                "Ignoring MPRIS command because capability is unavailable",
+                command=command,
+                reason=reason,
+            )
             return
-        await player.play()
+        await execute(player)
         await self.publish_snapshot("command")
+
+    async def handle_play(self) -> None:
+        """Forward Home Assistant ``play`` command to the active MPRIS player."""
+        await self._run_playback_command(
+            command="play",
+            reason="cannot_play",
+            is_supported=lambda player: player.get_can_play(),
+            execute=lambda player: player.play(),
+        )
 
     async def handle_pause(self) -> None:
         """Forward Home Assistant ``pause`` command to the active MPRIS player."""
-        player = self._require_player("pause")
-        if player is None:
-            return
-        if not await player.get_can_pause():
-            LOGGER.info("mpris_command_ignored", command="pause", reason="cannot_pause")
-            return
-        await player.pause()
-        await self.publish_snapshot("command")
+        await self._run_playback_command(
+            command="pause",
+            reason="cannot_pause",
+            is_supported=lambda player: player.get_can_pause(),
+            execute=lambda player: player.pause(),
+        )
 
     async def handle_stop(self) -> None:
         """Forward Home Assistant ``stop`` command to the active MPRIS player."""
-        player = self._require_player("stop")
-        if player is None:
-            return
-        if not await player.get_can_control():
-            LOGGER.info(
-                "mpris_command_ignored", command="stop", reason="cannot_control"
-            )
-            return
-        await player.stop()
-        await self.publish_snapshot("command")
+        await self._run_playback_command(
+            command="stop",
+            reason="cannot_control",
+            is_supported=lambda player: player.get_can_control(),
+            execute=lambda player: player.stop(),
+        )
 
     async def handle_next_track(self) -> None:
         """Forward Home Assistant ``next_track`` command to the active MPRIS player."""
-        player = self._require_player("next_track")
-        if player is None:
-            return
-        if not await player.get_can_go_next():
-            LOGGER.info(
-                "mpris_command_ignored", command="next", reason="cannot_go_next"
-            )
-            return
-        await player.next()
-        await self.publish_snapshot("command")
+        await self._run_playback_command(
+            command="next_track",
+            reason="cannot_go_next",
+            is_supported=lambda player: player.get_can_go_next(),
+            execute=lambda player: player.next(),
+        )
 
     async def handle_previous_track(self) -> None:
         """Forward Home Assistant ``previous_track`` command to the player."""
-        player = self._require_player("previous_track")
-        if player is None:
-            return
-        if not await player.get_can_go_previous():
-            LOGGER.info(
-                "mpris_command_ignored", command="previous", reason="cannot_go_previous"
-            )
-            return
-        await player.previous()
-        await self.publish_snapshot("command")
+        await self._run_playback_command(
+            command="previous_track",
+            reason="cannot_go_previous",
+            is_supported=lambda player: player.get_can_go_previous(),
+            execute=lambda player: player.previous(),
+        )
 
     async def handle_volume_set(self, volume: float) -> None:
         """Set player volume and keep the cached snapshot consistent."""
         if not 0.0 <= volume <= 1.0:
-            LOGGER.warning("mpris_volume_out_of_range", volume=volume)
+            LOGGER.warning("Ignoring out-of-range MPRIS volume", volume=volume)
             return
         player = self._require_player("volume_set")
         if player is None:
@@ -280,18 +289,29 @@ class MprisBridge:
     async def handle_seek(self, position_seconds: float) -> None:
         """Seek the active track and keep the cached snapshot consistent."""
         if position_seconds < 0:
-            LOGGER.warning("mpris_seek_negative", position_seconds=position_seconds)
+            LOGGER.warning(
+                "Ignoring negative MPRIS seek position",
+                position_seconds=position_seconds,
+            )
             return
         player = self._require_player("seek")
         if player is None:
             return
         if not await player.get_can_seek():
-            LOGGER.info("mpris_command_ignored", command="seek", reason="cannot_seek")
+            LOGGER.info(
+                "Ignoring MPRIS command because capability is unavailable",
+                command="seek",
+                reason="cannot_seek",
+            )
             return
 
         track_id = track_id_from_metadata(await player.get_metadata())
         if track_id is None:
-            LOGGER.info("mpris_command_ignored", command="seek", reason="no_track_id")
+            LOGGER.info(
+                "Ignoring MPRIS command because capability is unavailable",
+                command="seek",
+                reason="no_track_id",
+            )
             return
 
         position_us = seconds_to_microseconds(position_seconds)
@@ -303,50 +323,39 @@ class MprisBridge:
 
     def _require_player(self, command: str) -> MprisPlayer | None:
         if self._player is None:
-            LOGGER.info("mpris_command_ignored_no_owner", command=command)
+            LOGGER.info(
+                "Ignoring MPRIS command while no D-Bus owner is attached",
+                command=command,
+            )
         return self._player
 
     def _callbacks(self) -> MediaPlayerCallbacks:
+        def command(
+            fn: Callable[[], Awaitable[None]],
+        ) -> Callable[[MediaPlayer, Message], Awaitable[None]]:
+            async def invoke(_player: MediaPlayer, _message: Message) -> None:
+                await fn()
+
+            return invoke
+
+        def value_command[T](
+            fn: Callable[[T], Awaitable[None]],
+        ) -> Callable[[MediaPlayer, T, Message], Awaitable[None]]:
+            async def invoke(_player: MediaPlayer, value: T, _message: Message) -> None:
+                await fn(value)
+
+            return invoke
+
         return {
-            "play": self._play_callback,
-            "pause": self._pause_callback,
-            "stop": self._stop_callback,
-            "next_track": self._next_callback,
-            "previous_track": self._previous_callback,
-            "volume_set": self._volume_set_callback,
-            "volume_mute": self._volume_mute_callback,
-            "seek": self._seek_callback,
+            "play": command(self.handle_play),
+            "pause": command(self.handle_pause),
+            "stop": command(self.handle_stop),
+            "next_track": command(self.handle_next_track),
+            "previous_track": command(self.handle_previous_track),
+            "volume_set": value_command(self.handle_volume_set),
+            "volume_mute": value_command(self.handle_volume_mute),
+            "seek": value_command(self.handle_seek),
         }
-
-    async def _play_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        await self.handle_play()
-
-    async def _pause_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        await self.handle_pause()
-
-    async def _stop_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        await self.handle_stop()
-
-    async def _next_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        await self.handle_next_track()
-
-    async def _previous_callback(self, _player: MediaPlayer, _message: Message) -> None:
-        await self.handle_previous_track()
-
-    async def _volume_set_callback(
-        self, _player: MediaPlayer, volume: float, _message: Message
-    ) -> None:
-        await self.handle_volume_set(volume)
-
-    async def _volume_mute_callback(
-        self, _player: MediaPlayer, muted: bool, _message: Message
-    ) -> None:
-        await self.handle_volume_mute(muted)
-
-    async def _seek_callback(
-        self, _player: MediaPlayer, position_seconds: float, _message: Message
-    ) -> None:
-        await self.handle_seek(position_seconds)
 
     async def _read_snapshot(self, player: MprisPlayer) -> MediaSnapshot:
         playback_status = await player.get_playback_status()
@@ -392,7 +401,7 @@ class MprisBridge:
             await self._media_player.set_muted(snapshot.muted)
         if previous is None or previous.album_art.url != snapshot.album_art.url:
             LOGGER.info(
-                "mpris_album_art_published",
+                "Publishing MPRIS album art payload",
                 album_art_payload_bytes=len(snapshot.album_art.url),
                 album_art_remotely_accessible=snapshot.album_art.remotely_accessible,
             )
@@ -429,11 +438,11 @@ class MprisBridge:
             try:
                 position_us = await player.get_position()
             except PlayerctldNoActivePlayerError:
-                LOGGER.info("mpris_no_active_player_during_position_poll")
+                LOGGER.info("No active MPRIS player while polling playback position")
                 await self._mark_unavailable()
                 continue
             except Exception:
-                LOGGER.exception("mpris_position_read_failed")
+                LOGGER.exception("Failed to read MPRIS playback position")
                 continue
 
             position = microseconds_to_seconds(position_us)
@@ -452,7 +461,10 @@ class MprisBridge:
             await self.publish_snapshot("properties_changed")
 
     async def _mark_unavailable(self) -> None:
-        LOGGER.info("mpris_unavailable", service_name=self._service_name)
+        LOGGER.info(
+            "MPRIS player unavailable; marking media player offline",
+            service_name=self._service_name,
+        )
         self._last_snapshot = None
         await self._media_player.set_available(False)
 

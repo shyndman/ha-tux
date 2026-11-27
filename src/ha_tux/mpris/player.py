@@ -18,6 +18,7 @@ from sdbus import (
 )
 
 from ha_tux.config import DEFAULT_POSITION_POLL_SECONDS, PLAYERCTLD_SERVICE_NAME
+from ha_tux.foundation.time import MICROSECONDS_PER_SECOND
 
 MPRIS_OBJECT_PATH: Final = "/org/mpris/MediaPlayer2"
 PLAYERCTLD_NO_ACTIVE_PLAYER_ERROR: Final = (
@@ -25,11 +26,9 @@ PLAYERCTLD_NO_ACTIVE_PLAYER_ERROR: Final = (
 )
 MPRIS_PLAYER_INTERFACE: Final = "org.mpris.MediaPlayer2.Player"
 MPRIS_NO_TRACK_PATH: Final = "/org/mpris/MediaPlayer2/TrackList/NoTrack"
-MICROSECONDS_PER_SECOND: Final = 1_000_000
 
 __all__ = [
     "DEFAULT_POSITION_POLL_SECONDS",
-    "MICROSECONDS_PER_SECOND",
     "MPRIS_NO_TRACK_PATH",
     "MPRIS_OBJECT_PATH",
     "MPRIS_PLAYER_INTERFACE",
@@ -49,9 +48,7 @@ __all__ = [
     "metadata_string",
     "metadata_string_list",
     "metadata_value",
-    "microseconds_to_seconds",
     "mpris_status_to_ha_state",
-    "seconds_to_microseconds",
     "track_id_from_metadata",
 ]
 
@@ -393,19 +390,3 @@ def track_id_from_metadata(metadata: MetadataMap) -> str | None:
 def artist_text_from_metadata(metadata: MetadataMap) -> str:
     """Join ``xesam:artist`` entries with commas."""
     return ", ".join(metadata_string_list(metadata, "xesam:artist"))
-
-
-def microseconds_to_seconds(value_us: int) -> int:
-    """Convert microsecond timestamps into non-negative whole seconds."""
-    if value_us <= 0:
-        return 0
-
-    return value_us // MICROSECONDS_PER_SECOND
-
-
-def seconds_to_microseconds(value_seconds: float) -> int:
-    """Convert non-negative seconds into integer microseconds."""
-    if value_seconds < 0:
-        raise ValueError("Seconds must be non-negative")
-
-    return int(value_seconds * MICROSECONDS_PER_SECOND)
