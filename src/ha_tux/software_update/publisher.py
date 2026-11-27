@@ -34,7 +34,7 @@ from ha_tux.software_update.detect import (
 from ha_tux.software_update.gist import publish_gist, publish_shortlink
 from ha_tux.software_update.state import ManagerState, StateStore
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("apt")
 
 TodayFn = Callable[[], date]
 

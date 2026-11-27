@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +13,7 @@ from ha_mqtt_discoverable.sensors import (
     Sensor,
     SensorInfo,
 )
+from libsh import get_logger
 from pydantic import ValidationError
 
 from ha_tux.host_device import DEVICE_IDENTIFIER_DOMAIN, host_slug
@@ -24,7 +24,7 @@ from ha_tux.smart.report import (
     read_smart_reports,
 )
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger("smart")
 
 ENTITY_CATEGORY_DIAGNOSTIC: Final = "diagnostic"
 MEASUREMENT_STATE_CLASS: Final = "measurement"
@@ -120,9 +120,7 @@ def build_smart_publisher(
     try:
         drives = read_smart_reports(report_path)
     except (FileNotFoundError, json.JSONDecodeError, ValidationError):
-        LOGGER.error(
-            "SMART report unavailable at startup", extra={"path": str(report_path)}
-        )
+        LOGGER.error("SMART report unavailable at startup", path=str(report_path))
         drives = {}
     sensors_by_serial: dict[str, _DriveSensors] = {}
     for serial, drive in drives.items():

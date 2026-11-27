@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Final, cast
 
+from libsh import get_logger
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger("smart")
 
 SMART_REPORT_PATH: Final = Path("/var/lib/ha-tux/smart.json")
 DEFAULT_SMART_POLL_SECONDS: Final = 86400.0

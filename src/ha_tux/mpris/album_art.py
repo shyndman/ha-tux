@@ -1,13 +1,14 @@
 import base64
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
+from libsh import get_logger
+
 SupportedImageMimeType = Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger("mpris")
 
 DATA_URL_PREFIX = "data:"
 BASE64_MARKER = ";base64,"
@@ -81,16 +82,12 @@ class AlbumArtResolver:
 
         if parsed.scheme != "file":
             self._last_missing_url = None
-            LOGGER.warning(
-                "Unsupported album art URL scheme", extra={"scheme": parsed.scheme}
-            )
+            LOGGER.warning("Unsupported album art URL scheme", scheme=parsed.scheme)
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         if parsed.netloc not in LOCAL_FILE_HOSTS:
             self._last_missing_url = None
-            LOGGER.warning(
-                "Unsupported album art file host", extra={"host": parsed.netloc}
-            )
+            LOGGER.warning("Unsupported album art file host", host=parsed.netloc)
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         return self._resolve_file_url(art_url, Path(unquote(parsed.path)))
@@ -103,15 +100,13 @@ class AlbumArtResolver:
             return AlbumArtPayload(url="", remotely_accessible=False)
         except OSError:
             self._last_missing_url = None
-            LOGGER.exception("Unable to stat album art file", extra={"path": str(path)})
+            LOGGER.exception("Unable to stat album art file", path=str(path))
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         self._last_missing_url = None
 
         if not path.is_file():
-            LOGGER.warning(
-                "Album art path is not a regular file", extra={"path": str(path)}
-            )
+            LOGGER.warning("Album art path is not a regular file", path=str(path))
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         key = AlbumArtCacheKey(path=path, mtime_ns=stat.st_mtime_ns, size=stat.st_size)
@@ -129,12 +124,12 @@ class AlbumArtResolver:
             self._log_missing_file(original_url, path)
             return AlbumArtPayload(url="", remotely_accessible=False)
         except OSError:
-            LOGGER.exception("Unable to read album art file", extra={"path": str(path)})
+            LOGGER.exception("Unable to read album art file", path=str(path))
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         mime_type = detect_image_mime_type(file_bytes)
         if mime_type is None:
-            LOGGER.warning("Unsupported album art file type", extra={"path": str(path)})
+            LOGGER.warning("Unsupported album art file type", path=str(path))
             return AlbumArtPayload(url="", remotely_accessible=False)
 
         encoded = base64.b64encode(file_bytes).decode("ascii")
@@ -154,7 +149,7 @@ class AlbumArtResolver:
             return
 
         self._last_missing_url = original_url
-        LOGGER.warning("Album art file not found", extra={"path": str(path)})
+        LOGGER.warning("Album art file not found", path=str(path))
 
 
 def detect_image_mime_type(file_bytes: bytes) -> SupportedImageMimeType | None:

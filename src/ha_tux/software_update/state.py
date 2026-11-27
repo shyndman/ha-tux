@@ -14,7 +14,7 @@ from xdg_base_dirs import xdg_state_home
 
 from ha_tux.foundation.files import atomic_write_text
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("apt")
 
 STATE_DIRECTORY_NAME: Final = "ha-tux"
 STATE_FILE_NAME: Final = "state.toml"

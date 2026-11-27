@@ -30,7 +30,7 @@ from sdbus_async.dbus_daemon import FreedesktopDbus
 
 from ha_tux.foundation.tasks import cancel_task, schedule_next
 
-LOGGER = get_logger(__name__)
+LOGGER = get_logger("dbus")
 
 DBUS_DAEMON_SERVICE_NAME: Final = "org.freedesktop.DBus"
 DBUS_DAEMON_OBJECT_PATH: Final = "/org/freedesktop/DBus"
