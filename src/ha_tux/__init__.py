@@ -20,12 +20,7 @@ from ha_tux.config import (
 )
 from ha_tux.host_device import build_host_device_info, host_slug
 from ha_tux.input_active import run_input_active
-from ha_tux.mpris.bridge import (
-    DEFAULT_POSITION_POLL_SECONDS,
-    AsyncMprisMediaPlayerBridge,
-    create_bridge,
-)
-from ha_tux.mpris.entity import build_media_player_entity
+from ha_tux.mpris import DEFAULT_POSITION_POLL_SECONDS, run_mpris
 from ha_tux.power import run_power
 from ha_tux.run_state import StateStore, state_file_path
 from ha_tux.runtime import (
@@ -57,17 +52,6 @@ __all__ = [
     "features_for_role",
     "main",
 ]
-
-
-async def _run_media(ctx: SessionContext) -> None:
-    entity = build_media_player_entity(ctx.device, host_prefix=ctx.host_prefix)
-    bridge: AsyncMprisMediaPlayerBridge = create_bridge(
-        ctx.session,
-        entity,
-        service_name=ctx.config.mpris.service,
-        position_poll_seconds=ctx.config.mpris.position_poll_seconds,
-    )
-    await bridge.run()
 
 
 async def _run_zfs(ctx: SessionContext) -> None:
@@ -117,7 +101,7 @@ _HOST_ROLES: frozenset[Role] = frozenset({"host", "all"})
 _UPDATE_ROLES: frozenset[Role] = frozenset({"updates", "all"})
 
 FEATURES: tuple[Feature, ...] = (
-    Feature("mpris", _SESSION_ROLES, _run_media),
+    Feature("mpris", _SESSION_ROLES, run_mpris),
     Feature("input_active", _SESSION_ROLES, run_input_active),
     Feature("screen_lock", _SESSION_ROLES, run_screen_lock),
     Feature("zfs", _HOST_ROLES, _run_zfs),

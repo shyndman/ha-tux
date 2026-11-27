@@ -2,9 +2,10 @@ import base64
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
-from ha_tux.mpris.mpris import SupportedImageMimeType
+SupportedImageMimeType = Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
 
 LOGGER = logging.getLogger(__name__)
 
