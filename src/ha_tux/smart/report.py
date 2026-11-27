@@ -117,7 +117,7 @@ def read_smart_reports(path: Path) -> dict[str, DriveSmart]:
         try:
             report = _DriveReport.model_validate(entry)
         except ValidationError:
-            LOGGER.warning("smart_drive_skipped_invalid")
+            LOGGER.warning("Skipping invalid SMART drive report entry")
             continue
         result[report.serial_number] = _to_drive_smart(report)
     return result

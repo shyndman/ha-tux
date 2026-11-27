@@ -36,7 +36,7 @@ from ha_tux.software_update import run_software_update
 from ha_tux.zfs.entity import build_zfs_pool_publisher
 from ha_tux.zfs.zpool import discover_pool_names
 
-STARTUP_EVENT = "application_started"
+STARTUP_EVENT = "Application started"
 
 __all__ = [
     "DEFAULT_MQTT_DISCOVERY_PREFIX",
@@ -118,7 +118,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         asyncio.run(async_main(config, role))
     except KeyboardInterrupt:
-        logger.info("application_interrupted")
+        logger.info("Application interrupted")
 
 
 async def async_main(config: HaTuxConfig, role: Role) -> None:

@@ -87,7 +87,7 @@ def default_mqtt_client_name() -> str:
         host = load_host_device_info()
     except Exception as error:
         get_logger(LOGGER_NAME).info(
-            "hostnamectl_client_name_fallback",
+            "Failed to read hostnamectl for MQTT client name; falling back to socket hostname",
             error=str(error),
         )
         return socket.gethostname()
@@ -99,7 +99,7 @@ def build_host_device_info() -> DeviceInfo:
         host = load_host_device_info()
     except Exception as error:
         get_logger(LOGGER_NAME).info(
-            "hostnamectl_device_info_fallback",
+            "Failed to read hostnamectl for host device info; falling back to socket hostname",
             error=str(error),
         )
         host = HostDeviceInfo(

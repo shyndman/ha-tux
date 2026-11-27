@@ -100,13 +100,13 @@ async def run_poller(
 
     Logs and re-raises any failing iteration so the supervising runtime unwinds.
     """
-    LOGGER.debug("poller_started", poller=name, interval_seconds=interval_seconds)
+    LOGGER.debug("Started poller", poller=name, interval_seconds=interval_seconds)
 
     while True:
         try:
             await poll()
         except Exception:
-            LOGGER.exception("poller_iteration_failed", poller=name)
+            LOGGER.exception("Poller iteration failed", poller=name)
             raise
 
         await sleep(interval_seconds)
@@ -152,7 +152,7 @@ class SessionRuntime:
     async def run(self) -> None:
         """Run the reconnect loop until cancelled, cleanly closed, or fatally failed."""
         feature_names = [feature.name for feature in self._features]
-        LOGGER.info("session_runtime_started", features=feature_names)
+        LOGGER.info("Started session runtime", features=feature_names)
         self._delay_seconds = INITIAL_RECONNECT_DELAY_SECONDS
         self._disconnect_started_at = None
 
@@ -160,7 +160,7 @@ class SessionRuntime:
             try:
                 await self._run_once()
             except asyncio.CancelledError:
-                LOGGER.info("session_runtime_cancelled")
+                LOGGER.info("Session runtime cancelled")
                 raise
             except _TransportReconnectError as reconnect:
                 delay = self._delay_seconds
@@ -170,10 +170,10 @@ class SessionRuntime:
                     delay * BACKOFF_MULTIPLIER, MAX_RECONNECT_DELAY_SECONDS
                 )
             except Exception:
-                LOGGER.exception("session_fatal_failure")
+                LOGGER.exception("Session runtime encountered a fatal error")
                 raise
             else:
-                LOGGER.info("session_closed_cleanly")
+                LOGGER.info("MQTT session closed cleanly")
                 return
 
     def _log_reconnect_failure(self, *, delay: float, cause: Exception) -> None:
@@ -212,14 +212,14 @@ class SessionRuntime:
 
         if self._delay_seconds != INITIAL_RECONNECT_DELAY_SECONDS:
             LOGGER.info(
-                "session_backoff_reset",
+                "Reset MQTT reconnect backoff",
                 previous_delay_seconds=self._delay_seconds,
                 delay_seconds=INITIAL_RECONNECT_DELAY_SECONDS,
             )
             self._delay_seconds = INITIAL_RECONNECT_DELAY_SECONDS
 
         LOGGER.info(
-            "session_connected",
+            "Connected MQTT session",
             features=[feature.name for feature in self._features],
         )
 
@@ -236,7 +236,7 @@ class SessionRuntime:
                 _ = tasks.create_task(entered.wait_closed(), name="mqtt_transport")
 
                 for feature in self._features:
-                    LOGGER.debug("feature_starting", feature=feature.name)
+                    LOGGER.debug("Starting feature", feature=feature.name)
                     _ = tasks.create_task(
                         feature.run(ctx),
                         name=f"feature:{feature.name}",
@@ -258,7 +258,7 @@ class SessionRuntime:
 
         if isinstance(error, aiomqtt.MqttError):
             LOGGER.warning(
-                "command_callback_transport_failed",
+                "MQTT transport failed inside command callback",
                 topic=topic,
                 error=str(error),
                 error_type=type(error).__name__,
@@ -266,7 +266,7 @@ class SessionRuntime:
             raise error
 
         LOGGER.warning(
-            "command_callback_isolated",
+            "Isolated non-MQTT error in command callback",
             topic=topic,
             error=str(error),
             error_type=type(error).__name__,

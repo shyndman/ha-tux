@@ -46,7 +46,10 @@ def collect_reports(
         if isinstance(obj.get("serial_number"), str):
             drives.append(obj)
         else:
-            LOGGER.warning("smart_scan_no_serial", extra={"device": dev.name})
+            LOGGER.warning(
+                "Skipping SMART device without serial number",
+                extra={"device": dev.name},
+            )
     return drives
 
 
@@ -81,4 +84,4 @@ def main() -> None:
     SMART_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     _ = SMART_REPORT_PATH.write_text(json.dumps(report))
     SMART_REPORT_PATH.chmod(REPORT_FILE_MODE)
-    logger.info("smart_scan_complete", extra={"drives": len(drives)})
+    logger.info("Completed SMART drive scan", extra={"drives": len(drives)})

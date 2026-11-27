@@ -115,7 +115,7 @@ class ZfsPoolPublisher:
         try:
             statuses = await read_zpool_statuses()
         except Exception:
-            LOGGER.exception("zfs_status_read_failed")
+            LOGGER.exception("Failed to read ZFS pool statuses")
             await self._set_all_unavailable()
             return
 
@@ -124,7 +124,7 @@ class ZfsPoolPublisher:
         try:
             snapshots = await read_pool_snapshots()
         except Exception:
-            LOGGER.exception("zfs_snapshot_read_failed")
+            LOGGER.exception("Failed to read ZFS pool snapshots")
             snapshots = None
         for pool_name, sensors in self._pools.items():
             status = by_name.get(pool_name)

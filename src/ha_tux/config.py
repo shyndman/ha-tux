@@ -240,18 +240,24 @@ def load_config(
     except OSError as error:
         template_write_failed = True
         logger.info(
-            "config_file_template_write_failed",
+            "Failed to write default configuration file template",
             path=os.fspath(config_path),
             error=str(error),
         )
 
     file_data = read_config_file(config_path)
     if default_written:
-        logger.info("config_file_template_written", path=os.fspath(config_path))
+        logger.info(
+            "Wrote default configuration file template",
+            path=os.fspath(config_path),
+        )
     elif config_path.exists():
-        logger.info("config_file_loaded", path=os.fspath(config_path))
+        logger.info("Loaded configuration file", path=os.fspath(config_path))
     elif not template_write_failed:
-        logger.info("config_file_absent", path=os.fspath(config_path))
+        logger.info(
+            "Configuration file absent; using defaults",
+            path=os.fspath(config_path),
+        )
 
     try:
         file_config = HaTuxConfig.model_validate(file_data)
@@ -272,7 +278,7 @@ def load_config(
             ) from error
 
     logger.info(
-        "startup_configuration",
+        "Startup configuration",
         configuration=f"\n{format_config_for_log(config)}",
     )
     return config

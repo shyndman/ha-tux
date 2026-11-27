@@ -60,7 +60,7 @@ class SmartPublisher:
         try:
             reports = read_smart_reports(self._report_path)
         except (FileNotFoundError, json.JSONDecodeError, ValidationError):
-            LOGGER.exception("smart_report_read_failed")
+            LOGGER.exception("Failed to read SMART report")
             await self._set_all_unavailable()
             return
         for serial, sensors in self._drives.items():

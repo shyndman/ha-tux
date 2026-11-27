@@ -321,9 +321,9 @@ url = "mqtt://log-user:secret-password@mqtt.local:1883"
 
     _ = load_config(path=path, env={})
 
-    assert ("config_file_loaded", {"path": str(path)}) in logger.records
+    assert ("Loaded configuration file", {"path": str(path)}) in logger.records
     startup_records = [
-        kwargs for event, kwargs in logger.records if event == "startup_configuration"
+        kwargs for event, kwargs in logger.records if event == "Startup configuration"
     ]
     assert len(startup_records) == 1
     configuration = startup_records[0]["configuration"]
