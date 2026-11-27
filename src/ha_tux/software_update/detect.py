@@ -1,20 +1,24 @@
+"""Package update detection, cooldown gating, and release formatting."""
+
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import os
 import re
 import shutil
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import ClassVar, Final, cast
 
+from libsh import get_logger
 from pydantic import BaseModel, ConfigDict
 
-LOGGER = logging.getLogger(__name__)
+from ha_tux.config import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
+from ha_tux.software_update.runner import CommandRunner, subprocess_runner
+
+LOGGER = get_logger(__name__)
 
 __all__ = [
     "APT_CHECK_PATH",
@@ -30,7 +34,6 @@ __all__ = [
     "PackageUpdate",
     "SurfaceDecision",
     "UpdateReport",
-    "_run",
     "decide_surface",
     "entity_title",
     "gist_body",
@@ -48,7 +51,6 @@ __all__ = [
     "status_word",
 ]
 
-DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS: Final = 172800.0  # 2 days
 SURFACE_COOLDOWN_DAYS: Final = 2
 SENTINEL_DATE: Final = "1970-01-01"
 APT_CHECK_PATH: Final = "/usr/lib/update-notifier/apt-check"
@@ -102,24 +104,8 @@ class UpdateReport:
     pinned: int | None = None  # brew only
 
 
-async def _run(
-    cmd: Sequence[str], *, env: Mapping[str, str] | None = None
-) -> tuple[int, str, str]:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=dict(env) if env is not None else None,
-    )
-    stdout, stderr = await proc.communicate()
-    return (
-        proc.returncode if proc.returncode is not None else -1,
-        stdout.decode(errors="replace"),
-        stderr.decode(errors="replace"),
-    )
-
-
 def parse_apt_upgradable(stdout: str) -> tuple[PackageUpdate, ...]:
+    """Parse ``apt list --upgradable`` output into ``PackageUpdate`` entries."""
     packages: list[PackageUpdate] = []
     for raw in stdout.splitlines():
         line = raw.strip()
@@ -136,6 +122,7 @@ def parse_apt_upgradable(stdout: str) -> tuple[PackageUpdate, ...]:
 
 
 def parse_apt_check(stderr: str) -> int | None:
+    """Extract security update count from ``apt-check`` stderr."""
     match = _APT_CHECK_RE.search(stderr)
     if match is None:
         return None
@@ -143,6 +130,7 @@ def parse_apt_check(stderr: str) -> int | None:
 
 
 def parse_apt_download_bytes(sim_stdout: str) -> int | None:
+    """Extract estimated download size from simulated ``apt-get upgrade`` output."""
     match = _DOWNLOAD_RE.search(sim_stdout)
     if match is None:
         return None
@@ -160,12 +148,27 @@ def parse_apt_installable(sim_stdout: str) -> frozenset[str]:
     return frozenset(_APT_INST_RE.findall(sim_stdout))
 
 
-def read_reboot_required() -> tuple[bool, str | None]:
-    if not Path(REBOOT_REQUIRED_PATH).exists():
+def read_reboot_required(
+    *,
+    reboot_required_path: Path | None = None,
+    reboot_pkgs_path: Path | None = None,
+) -> tuple[bool, str | None]:
+    """Read Linux ``/run/reboot-required`` marker and triggering package name."""
+    flag_path = (
+        reboot_required_path
+        if reboot_required_path is not None
+        else Path(REBOOT_REQUIRED_PATH)
+    )
+    if not flag_path.exists():
         return (False, None)
+    pkgs_path = (
+        reboot_pkgs_path
+        if reboot_pkgs_path is not None
+        else Path(REBOOT_REQUIRED_PKGS_PATH)
+    )
     pkg: str | None = None
     try:
-        lines = Path(REBOOT_REQUIRED_PKGS_PATH).read_text().splitlines()
+        lines = pkgs_path.read_text().splitlines()
     except OSError:
         lines = []
     if lines:
@@ -201,6 +204,7 @@ def _brew_package(entry: _BrewEntry, pinned: bool) -> PackageUpdate:
 def parse_brew_outdated(
     payload: Mapping[str, object],
 ) -> tuple[tuple[PackageUpdate, ...], int, int]:
+    """Parse ``brew outdated --json=v2`` into packages, cask count, and pinned count."""
     data = _BrewOutdated.model_validate(payload)
     packages: list[PackageUpdate] = []
     pinned_count = 0
@@ -212,44 +216,68 @@ def parse_brew_outdated(
     return tuple(packages), len(data.casks), pinned_count
 
 
-async def query_apt(apt_get: str) -> UpdateReport:
-    apt = shutil.which("apt") or apt_get
+async def query_apt(
+    apt_get: str,
+    *,
+    runner: CommandRunner = subprocess_runner,
+    apt_path: str | None = None,
+    apt_check_path: Path | None = None,
+    reboot_required_path: Path | None = None,
+    reboot_pkgs_path: Path | None = None,
+) -> UpdateReport:
+    """Query pending non-phased ``apt`` updates via ``runner``."""
+    apt = apt_path if apt_path is not None else (shutil.which("apt") or apt_get)
+    check_path = apt_check_path if apt_check_path is not None else Path(APT_CHECK_PATH)
     env = {**os.environ, "LC_ALL": "C"}
-    rc, out, err = await _run([apt, "list", "--upgradable"], env=env)
-    if rc != 0:
-        raise RuntimeError(f"apt list --upgradable failed: {err.strip()}")
-    packages = parse_apt_upgradable(out)
+
+    list_result = await runner([apt, "list", "--upgradable"], env=env)
+    if list_result.returncode != 0:
+        raise RuntimeError(
+            f"apt list --upgradable failed: {list_result.stderr.strip()}"
+        )
+
+    packages = parse_apt_upgradable(list_result.stdout)
     security: int | None = None
-    if Path(APT_CHECK_PATH).exists():
-        _, _, check_err = await _run([APT_CHECK_PATH], env=env)
-        security = parse_apt_check(check_err)
-    sim_rc, sim_out, _ = await _run(
+    if check_path.exists():
+        check_result = await runner([str(check_path)], env=env)
+        security = parse_apt_check(check_result.stderr)
+
+    sim_result = await runner(
         [apt_get, "-s", "-o", APT_NEVER_PHASED_OPT, "upgrade"], env=env
     )
-    if sim_rc == 0:
-        installable = parse_apt_installable(sim_out)
+    if sim_result.returncode == 0:
+        installable = parse_apt_installable(sim_result.stdout)
         packages = tuple(pkg for pkg in packages if pkg.name in installable)
-    reboot_required, reboot_pkg = read_reboot_required()
+
+    reboot_required, reboot_pkg = read_reboot_required(
+        reboot_required_path=reboot_required_path,
+        reboot_pkgs_path=reboot_pkgs_path,
+    )
     return UpdateReport(
         manager="apt",
         label="apt",
         count=len(packages),
         packages=packages,
         security=security,
-        download_bytes=parse_apt_download_bytes(sim_out),
+        download_bytes=parse_apt_download_bytes(sim_result.stdout),
         reboot_required=reboot_required,
         reboot_pkg=reboot_pkg,
     )
 
 
-async def query_brew(brew: str) -> UpdateReport:
-    rc, _, err = await _run([brew, "update", "--quiet"])
-    if rc != 0:
-        LOGGER.warning("brew update failed: %s", err.strip())
-    rc, out, err = await _run([brew, "outdated", "--json=v2"])
-    if rc != 0:
-        raise RuntimeError(f"brew outdated failed: {err.strip()}")
-    payload = cast(Mapping[str, object], json.loads(out))
+async def query_brew(
+    brew: str, *, runner: CommandRunner = subprocess_runner
+) -> UpdateReport:
+    """Refresh Homebrew metadata and query outdated formulae and casks via ``runner``."""
+    update_result = await runner([brew, "update", "--quiet"])
+    if update_result.returncode != 0:
+        LOGGER.warning("brew_update_failed", error=update_result.stderr.strip())
+
+    outdated_result = await runner([brew, "outdated", "--json=v2"])
+    if outdated_result.returncode != 0:
+        raise RuntimeError(f"brew outdated failed: {outdated_result.stderr.strip()}")
+
+    payload = cast(Mapping[str, object], json.loads(outdated_result.stdout))
     packages, casks, pinned = parse_brew_outdated(payload)
     return UpdateReport(
         manager="brew",
@@ -292,14 +320,17 @@ def decide_surface(
     today: date,
     cooldown_days: int = SURFACE_COOLDOWN_DAYS,
 ) -> SurfaceDecision:
+    """Decide whether pending updates should surface in Home Assistant today."""
     if previous - current:  # a pending package was applied
         last_install_date = today
         notify_anchor = None  # un-surface; cooldown starts
+
     today_iso = today.isoformat()
     if not current:  # nothing actionable pending
         return SurfaceDecision(
             today_iso, today_iso, False, None, last_install_date, current
         )
+
     in_cooldown = (
         last_install_date is not None
         and (today - last_install_date).days < cooldown_days
@@ -308,8 +339,10 @@ def decide_surface(
         return SurfaceDecision(
             today_iso, today_iso, False, None, last_install_date, current
         )
+
     if notify_anchor is None:  # first surfacing of this batch
         notify_anchor = today
+
     return SurfaceDecision(
         SENTINEL_DATE,
         notify_anchor.isoformat(),
@@ -359,6 +392,7 @@ def _brew_summary(report: UpdateReport) -> str:
 
 
 def release_summary(report: UpdateReport) -> str | None:
+    """Format Home Assistant markdown release summary for pending updates."""
     if report.count == 0:
         return None
     if report.manager == "apt":
@@ -381,6 +415,7 @@ def _gist_summary_line(report: UpdateReport, refresh: str) -> str:
 
 
 def gist_body(report: UpdateReport, hostname: str, refresh: str) -> str:
+    """Render the markdown release-notes document published to the manager's gist."""
     heading = f"# {report.label} updates on {hostname}"
     if report.count == 0:
         return f"{heading}\n\n_No updates — up to date as of {refresh}._\n"

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping, Sequence
 from datetime import date
+import json
+from pathlib import Path
 
 from ha_tux.software_update.detect import (
     SENTINEL_DATE,
@@ -11,13 +15,16 @@ from ha_tux.software_update.detect import (
     entity_title,
     human_bytes,
     parse_apt_check,
-    parse_apt_installable,
     parse_apt_download_bytes,
+    parse_apt_installable,
     parse_apt_upgradable,
     parse_brew_outdated,
+    query_apt,
+    query_brew,
     release_summary,
     status_word,
 )
+from ha_tux.software_update.runner import CommandResult
 
 APT_UPGRADABLE = """Listing... Done
 bash/stable 5.2.21-2 amd64 [upgradable from: 5.2.21-1]
@@ -263,3 +270,75 @@ def test_decide_surface_resurfaces_after_cooldown() -> None:
     assert d.notify_anchor == today
     assert d.installed == SENTINEL_DATE
     assert isinstance(d, SurfaceDecision)
+
+
+def test_query_apt_filters_phased_and_reads_reboot(tmp_path: Path) -> None:
+    reboot_flag = tmp_path / "reboot-required"
+    reboot_pkgs = tmp_path / "reboot-required.pkgs"
+    apt_check = tmp_path / "apt-check"
+    _ = reboot_flag.write_text("*** Restart required ***\n")
+    _ = reboot_pkgs.write_text("linux-image-generic\n")
+    _ = apt_check.write_text("#!/bin/sh\n")
+
+    async def runner(
+        cmd: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> CommandResult:
+        del env
+        if cmd[1:3] == ["list", "--upgradable"]:
+            return CommandResult(
+                0,
+                (
+                    "Listing... Done\n"
+                    + "bash/stable 5.2 amd64 [upgradable from: 5.1]\n"
+                    + "curl/stable 8.5 amd64 [upgradable from: 8.4]\n"
+                ),
+                "",
+            )
+        if cmd[0] == str(apt_check):
+            return CommandResult(0, "", "2;1\n")
+        if cmd[-1] == "upgrade":
+            return CommandResult(
+                0,
+                "Inst bash [5.1] (5.2)\nNeed to get 2.0 MB of archives.\n",
+                "",
+            )
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    report = asyncio.run(
+        query_apt(
+            "/usr/bin/apt-get",
+            runner=runner,
+            apt_path="/usr/bin/apt",
+            apt_check_path=apt_check,
+            reboot_required_path=reboot_flag,
+            reboot_pkgs_path=reboot_pkgs,
+        )
+    )
+
+    assert report.count == 1
+    assert report.packages == (PackageUpdate("bash", "5.1", "5.2"),)
+    assert report.security == 1
+    assert report.download_bytes == 2 * 1024 * 1024
+    assert report.reboot_required is True
+    assert report.reboot_pkg == "linux-image-generic"
+
+
+def test_query_brew_excludes_pinned_count() -> None:
+    async def runner(
+        cmd: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> CommandResult:
+        del env
+        if cmd[1] == "update":
+            return CommandResult(0, "", "")
+        if cmd[1] == "outdated":
+            return CommandResult(0, json.dumps(BREW_PAYLOAD), "")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    report = asyncio.run(
+        query_brew("/home/linuxbrew/.linuxbrew/bin/brew", runner=runner)
+    )
+
+    assert report.manager == "brew"
+    assert report.count == 2
+    assert report.casks == 1
+    assert report.pinned == 1

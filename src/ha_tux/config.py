@@ -14,11 +14,11 @@ from xdg_base_dirs import xdg_config_home
 from ha_tux.host_device import default_mqtt_client_name
 from ha_tux.zfs.zpool import DEFAULT_ZFS_POLL_SECONDS
 from ha_tux.smart.report import DEFAULT_SMART_POLL_SECONDS
-from ha_tux.software_update.detect import DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS
 
 LOGGER_NAME: Final = "ha_tux"
 # The timeout is the input window before the seat is reported "inactive".
 DEFAULT_INPUT_ACTIVE_IDLE_TIMEOUT_SECONDS: Final = 60.0
+DEFAULT_SOFTWARE_UPDATE_POLL_SECONDS: Final = 172800.0  # 2 days
 PLAYERCTLD_SERVICE_NAME: Final = "org.mpris.MediaPlayer2.playerctld"
 DEFAULT_POSITION_POLL_SECONDS: Final = 1.0
 DEFAULT_MQTT_URL: Final = "mqtt://homeassistant:1883"
