@@ -74,14 +74,16 @@ async def run_screen_lock(
 
     async def on_press(_sender: Button, _message: aiomqtt.Message) -> None:
         if active_screensaver is None:
-            LOGGER.warning("screen_lock_ignored_unavailable")
+            LOGGER.warning(
+                "Ignoring screen lock command while GNOME ScreenSaver is unavailable"
+            )
             return
 
         try:
             await active_screensaver.lock()
-            LOGGER.info("screen_lock_requested")
+            LOGGER.info("Requested GNOME screen lock")
         except Exception:
-            LOGGER.exception("screen_lock_failed")
+            LOGGER.exception("Failed to lock GNOME screen")
 
     info = ButtonInfo(
         device=ctx.device,
@@ -100,13 +102,13 @@ async def run_screen_lock(
     async def attach() -> None:
         nonlocal active_screensaver
         active_screensaver = screensaver_factory()
-        LOGGER.info("screen_lock_available")
+        LOGGER.info("GNOME ScreenSaver available; marking lock button online")
         await button.set_available(True)
 
     async def mark_unavailable() -> None:
         nonlocal active_screensaver
         active_screensaver = None
-        LOGGER.info("screen_lock_unavailable")
+        LOGGER.info("GNOME ScreenSaver unavailable; marking lock button offline")
         await button.set_available(False)
 
     await watch_name(

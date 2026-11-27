@@ -194,7 +194,9 @@ async def _track_power(entities: _PowerEntities, device: UPowerDevice) -> None:
             return
 
         last = sample
-        LOGGER.info("power_changed", percentage=percentage, state=state)
+        LOGGER.info(
+            "UPower battery telemetry changed", percentage=percentage, state=state
+        )
         await entities.publish(percentage, state)
 
     await sync()
@@ -235,7 +237,7 @@ async def run_power(
         await _track_power(entities, resolve_device())
 
     async def mark_unavailable() -> None:
-        LOGGER.info("power_unavailable")
+        LOGGER.info("UPower unavailable; marking power entities offline")
         await entities.mark_unavailable()
 
     await watch_name(
