@@ -19,6 +19,7 @@ from sdbus import (
 )
 
 from ha_tux.dbus import NameOwnerSource, session_name_owner_source, watch_name
+from ha_tux.foundation.time import seconds_to_milliseconds
 from ha_tux.runtime import SessionContext
 
 LOGGER = get_logger(__name__)
@@ -26,8 +27,6 @@ LOGGER = get_logger(__name__)
 IDLE_MONITOR_SERVICE_NAME: Final = "org.gnome.Mutter.IdleMonitor"
 IDLE_MONITOR_OBJECT_PATH: Final = "/org/gnome/Mutter/IdleMonitor/Core"
 IDLE_MONITOR_INTERFACE: Final = "org.gnome.Mutter.IdleMonitor"
-
-MILLISECONDS_PER_SECOND: Final = 1000
 
 INPUT_ACTIVE_OBJECT_ID: Final = "input_active"
 INPUT_ACTIVE_NAME: Final = "Input Active"
@@ -131,11 +130,13 @@ class _IdleTracker:
         """Read initial idle state, arm Mutter watches, and follow fired edges."""
         idletime_ms = await self._monitor.get_idletime()
         active = idletime_ms < self._idle_timeout_ms
-        LOGGER.debug("input_active_snapshot", idletime_ms=idletime_ms, active=active)
+        LOGGER.debug(
+            "Read initial Mutter idle snapshot", idletime_ms=idletime_ms, active=active
+        )
 
         await self._emit(active)
         self._idle_watch_id = await self._monitor.add_idle_watch(self._idle_timeout_ms)
-        LOGGER.debug("input_active_idle_watch_armed", watch_id=self._idle_watch_id)
+        LOGGER.debug("Armed Mutter idle watch", watch_id=self._idle_watch_id)
 
         if not active:
             await self._arm_active_watch()
@@ -152,21 +153,21 @@ class _IdleTracker:
             self._active_watch_id = None
             await self._emit(True)
         else:
-            LOGGER.debug("input_active_watch_fired_unknown", watch_id=watch_id)
+            LOGGER.debug("Ignoring unrecognized Mutter watch id", watch_id=watch_id)
 
     async def _arm_active_watch(self) -> None:
         if self._active_watch_id is not None:
             return
 
         self._active_watch_id = await self._monitor.add_user_active_watch()
-        LOGGER.debug("input_active_active_watch_armed", watch_id=self._active_watch_id)
+        LOGGER.debug("Armed Mutter user-active watch", watch_id=self._active_watch_id)
 
     async def _emit(self, active: bool) -> None:
         if active == self._active:
             return
 
         self._active = active
-        LOGGER.info("input_active_changed", active=active)
+        LOGGER.info("Seat input activity changed", active=active)
         await self._sensor.set_available(True)
         if active:
             await self._sensor.on()
@@ -189,8 +190,8 @@ async def run_input_active(
         device_class=INPUT_ACTIVE_DEVICE_CLASS,
     )
     sensor = BinarySensor(ctx.session, info)
-    idle_timeout_ms = int(
-        ctx.config.input_active.idle_timeout_seconds * MILLISECONDS_PER_SECOND
+    idle_timeout_ms = seconds_to_milliseconds(
+        ctx.config.input_active.idle_timeout_seconds
     )
     source = (
         name_owner_source
@@ -207,7 +208,7 @@ async def run_input_active(
         await tracker.run()
 
     async def mark_unavailable() -> None:
-        LOGGER.info("input_active_unavailable")
+        LOGGER.info("Mutter idle monitor unavailable; marking input sensor offline")
         await sensor.set_available(False)
 
     await watch_name(
